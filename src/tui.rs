@@ -26,6 +26,7 @@ pub enum RepoStatus {
 #[derive(Debug, Clone)]
 pub struct RepoProgress {
     pub name: String,
+    pub path: String,
     pub status: RepoStatus,
     pub message: String,
     pub progress: u16,
@@ -34,6 +35,7 @@ pub struct RepoProgress {
 
 pub struct TuiApp {
     repos: Arc<Mutex<Vec<RepoProgress>>>,
+    command: String,
     selected: usize,
     scroll_offset: usize,
     show_detail: bool,
@@ -41,11 +43,13 @@ pub struct TuiApp {
 }
 
 impl TuiApp {
-    pub fn new(repo_names: Vec<String>) -> Self {
+    pub fn new(repo_names: Vec<String>, repo_paths: Vec<String>, command: &str) -> Self {
         let repos = repo_names
             .into_iter()
-            .map(|name| RepoProgress {
+            .zip(repo_paths)
+            .map(|(name, path)| RepoProgress {
                 name,
+                path,
                 status: RepoStatus::Pending,
                 message: "Waiting...".to_string(),
                 progress: 0,
@@ -55,6 +59,7 @@ impl TuiApp {
 
         TuiApp {
             repos: Arc::new(Mutex::new(repos)),
+            command: command.to_string(),
             selected: 0,
             scroll_offset: 0,
             show_detail: false,
@@ -197,26 +202,34 @@ impl TuiApp {
 
     fn print_summary(&self) {
         let repos = self.repos.lock().unwrap();
+        let total = repos.len();
+        let success_count = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Success)
+            .count();
         let failed: Vec<_> = repos
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
             .collect();
 
         if failed.is_empty() {
-            let success_count = repos
-                .iter()
-                .filter(|r| r.status == RepoStatus::Success)
-                .count();
-            println!("\x1b[1;32mAll {success_count} repositories succeeded.\x1b[0m");
+            println!(
+                "gitpp {}: all {success_count} repositories succeeded.",
+                self.command
+            );
             return;
         }
 
+        // Plain text, no ANSI codes — clipboard-friendly
         println!(
-            "\x1b[1;31m{} repository(ies) failed:\x1b[0m\n",
+            "gitpp {}: {}/{} succeeded, {} failed\n",
+            self.command,
+            success_count,
+            total,
             failed.len()
         );
         for repo in &failed {
-            println!("\x1b[1;33m--- {} ---\x1b[0m", repo.name);
+            println!("--- {} ({}) ---", repo.name, repo.path);
             if repo.output.is_empty() {
                 println!("  {}", repo.message);
             } else {

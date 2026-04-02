@@ -137,7 +137,25 @@ fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Res
         .map(|r| extract_repo_name(&r.remote))
         .collect();
 
-    let mut tui_app = TuiApp::new(repo_names);
+    let repo_paths: Vec<String> = enabled_repos
+        .iter()
+        .map(|r| {
+            base_dir
+                .join(&r.group)
+                .join(extract_repo_name(&r.remote))
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    let canonical_cmd = match command.as_str() {
+        "clone" | "clo" | "cl" => "clone",
+        "pull" | "pul" | "pu" => "pull",
+        "push" | "pus" | "ps" => "push",
+        other => other,
+    };
+
+    let mut tui_app = TuiApp::new(repo_names, repo_paths, canonical_cmd);
     let repos_handle = tui_app.get_repos_handle();
     let semaphore = Arc::new(Semaphore::new(jobs));
 

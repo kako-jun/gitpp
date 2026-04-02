@@ -73,7 +73,9 @@ ratatui + crossterm によるフルスクリーン TUI。
 
 ### 終了後サマリー
 
-TUI 終了後、失敗したリポジトリの git 出力を stdout に表示。全成功なら "All N repositories succeeded." と表示。
+TUI 終了後、プレーンテキスト（ANSIコードなし）でサマリーを stdout に出力。
+リポ名・フルパス・git 出力を含み、そのままコピペで AI エージェントに渡せる形式。
+push の場合は add/commit/push 全ステップの出力が結合される。
 
 ## アーキテクチャ
 

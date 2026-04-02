@@ -30,18 +30,34 @@ impl GitController {
     }
 
     pub fn git_push(&self, dir: &Path, commit_message: &str) -> GitResult {
+        let mut all_output = String::new();
+
         let add_result = self.exec_git(dir, &["add", "-A"]);
+        all_output.push_str(&add_result.output);
         if !add_result.success {
-            return add_result;
+            return GitResult {
+                output: all_output,
+                success: false,
+            };
         }
 
         let commit_result = self.exec_git(dir, &["commit", "-m", commit_message]);
-        // "nothing to commit" exits non-zero but is not a real failure for our purposes
+        all_output.push_str(&commit_result.output);
+        // "nothing to commit" exits non-zero but is not a real failure
         if !commit_result.success && !commit_result.output.contains("nothing to commit") {
-            return commit_result;
+            return GitResult {
+                output: all_output,
+                success: false,
+            };
         }
 
-        self.exec_git(dir, &["push"])
+        let push_result = self.exec_git(dir, &["push"]);
+        all_output.push_str(&push_result.output);
+
+        GitResult {
+            output: all_output,
+            success: push_result.success,
+        }
     }
 
     pub fn git_config(&self, dir: &Path, name: &str, email: &str) {
