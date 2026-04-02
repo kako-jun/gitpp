@@ -7,15 +7,15 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug executable 'gitp'",
+            "name": "Debug executable 'gitpp'",
             "cargo": {
                 "args": [
                     "build",
-                    "--bin=gitp",
-                    "--package=gitp"
+                    "--bin=gitpp",
+                    "--package=gitpp"
                 ],
                 "filter": {
-                    "name": "gitp",
+                    "name": "gitpp",
                     "kind": "bin"
                 }
             },
@@ -25,16 +25,16 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Debug unit tests in executable 'gitp'",
+            "name": "Debug unit tests in executable 'gitpp'",
             "cargo": {
                 "args": [
                     "test",
                     "--no-run",
-                    "--bin=gitp",
-                    "--package=gitp"
+                    "--bin=gitpp",
+                    "--package=gitpp"
                 ],
                 "filter": {
-                    "name": "gitp",
+                    "name": "gitpp",
                     "kind": "bin"
                 }
             },

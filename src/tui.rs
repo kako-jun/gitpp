@@ -8,7 +8,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::io;
@@ -28,11 +28,16 @@ pub struct RepoProgress {
     pub name: String,
     pub status: RepoStatus,
     pub message: String,
-    pub progress: u16, // 0-100
+    pub progress: u16,
+    pub output: String,
 }
 
 pub struct TuiApp {
     repos: Arc<Mutex<Vec<RepoProgress>>>,
+    selected: usize,
+    scroll_offset: usize,
+    show_detail: bool,
+    detail_scroll: u16,
 }
 
 impl TuiApp {
@@ -44,11 +49,16 @@ impl TuiApp {
                 status: RepoStatus::Pending,
                 message: "Waiting...".to_string(),
                 progress: 0,
+                output: String::new(),
             })
             .collect();
 
         TuiApp {
             repos: Arc::new(Mutex::new(repos)),
+            selected: 0,
+            scroll_offset: 0,
+            show_detail: false,
+            detail_scroll: 0,
         }
     }
 
@@ -56,18 +66,15 @@ impl TuiApp {
         Arc::clone(&self.repos)
     }
 
-    pub fn run(&mut self, is_parallel: bool) -> Result<(), io::Error> {
-        // Setup terminal
+    pub fn run(&mut self) -> Result<(), io::Error> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        // Run the app
-        let res = self.run_app(&mut terminal, is_parallel);
+        let res = self.run_app(&mut terminal);
 
-        // Restore terminal
         disable_raw_mode()?;
         execute!(
             terminal.backend_mut(),
@@ -80,18 +87,15 @@ impl TuiApp {
             println!("{err:?}");
         }
 
+        self.print_summary();
+
         Ok(())
     }
 
-    fn run_app<B: Backend>(
-        &mut self,
-        terminal: &mut Terminal<B>,
-        _is_parallel: bool,
-    ) -> io::Result<()> {
+    fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
         loop {
             terminal.draw(|f| self.ui(f))?;
 
-            // Check if all repos are done
             let repos = self.repos.lock().unwrap();
             let all_done = repos
                 .iter()
@@ -99,17 +103,30 @@ impl TuiApp {
             drop(repos);
 
             if all_done {
-                // Show final state for 1 second
-                std::thread::sleep(Duration::from_secs(1));
+                // Show final state briefly, then allow user to browse
+                // Auto-exit after 2 seconds if no key pressed
+                if event::poll(Duration::from_secs(2))? {
+                    if let Event::Key(key) = event::read()? {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => break,
+                            _ => {
+                                // User interacted, switch to browse mode
+                                self.handle_key(key.code);
+                                self.browse_mode(terminal)?;
+                                break;
+                            }
+                        }
+                    }
+                }
                 break;
             }
 
-            // Poll for events (non-blocking with timeout)
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
                     if let KeyCode::Char('q') = key.code {
                         break;
                     }
+                    self.handle_key(key.code);
                 }
             }
         }
@@ -117,10 +134,104 @@ impl TuiApp {
         Ok(())
     }
 
-    fn ui(&self, f: &mut Frame) {
+    fn browse_mode<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
+        loop {
+            terminal.draw(|f| self.ui(f))?;
+
+            if event::poll(Duration::from_millis(100))? {
+                if let Event::Key(key) = event::read()? {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Esc if !self.show_detail => break,
+                        _ => self.handle_key(key.code),
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_key(&mut self, key: KeyCode) {
+        let repo_count = self.repos.lock().unwrap().len();
+        if repo_count == 0 {
+            return;
+        }
+
+        match key {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if self.selected + 1 < repo_count {
+                    self.selected += 1;
+                    self.detail_scroll = 0;
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                if self.selected > 0 {
+                    self.selected -= 1;
+                    self.detail_scroll = 0;
+                }
+            }
+            KeyCode::Char('g') => {
+                self.selected = 0;
+                self.detail_scroll = 0;
+            }
+            KeyCode::Char('G') => {
+                self.selected = repo_count.saturating_sub(1);
+                self.detail_scroll = 0;
+            }
+            KeyCode::Char('l') | KeyCode::Right if self.show_detail => {
+                self.detail_scroll = self.detail_scroll.saturating_add(3);
+            }
+            KeyCode::Char('h') | KeyCode::Left if self.show_detail => {
+                self.detail_scroll = self.detail_scroll.saturating_sub(3);
+            }
+            KeyCode::Enter => {
+                self.show_detail = !self.show_detail;
+                self.detail_scroll = 0;
+            }
+            KeyCode::Esc => {
+                self.show_detail = false;
+            }
+            _ => {}
+        }
+    }
+
+    fn print_summary(&self) {
+        let repos = self.repos.lock().unwrap();
+        let failed: Vec<_> = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Failed)
+            .collect();
+
+        if failed.is_empty() {
+            let success_count = repos
+                .iter()
+                .filter(|r| r.status == RepoStatus::Success)
+                .count();
+            println!("\x1b[1;32mAll {success_count} repositories succeeded.\x1b[0m");
+            return;
+        }
+
+        println!(
+            "\x1b[1;31m{} repository(ies) failed:\x1b[0m\n",
+            failed.len()
+        );
+        for repo in &failed {
+            println!("\x1b[1;33m--- {} ---\x1b[0m", repo.name);
+            if repo.output.is_empty() {
+                println!("  {}", repo.message);
+            } else {
+                for line in repo.output.lines() {
+                    println!("  {line}");
+                }
+            }
+            println!();
+        }
+    }
+
+    fn ui(&mut self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(2)
+            .margin(1)
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(0),
@@ -131,22 +242,28 @@ impl TuiApp {
         // Header
         let header = Paragraph::new(vec![Line::from(vec![
             Span::styled(
-                "gitp",
+                "gitpp",
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" - Git Multiple Repository Manager"),
+            Span::raw(" - Git Personal Parallel Manager"),
         ])])
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default()),
-        );
+        .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
-        // Repository list
-        self.render_repos(f, chunks[1]);
+        // Main area: repo list (+ optional detail pane)
+        if self.show_detail {
+            let main_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+                .split(chunks[1]);
+
+            self.render_repos(f, main_chunks[0]);
+            self.render_detail(f, main_chunks[1]);
+        } else {
+            self.render_repos(f, chunks[1]);
+        }
 
         // Footer
         let repos = self.repos.lock().unwrap();
@@ -169,17 +286,17 @@ impl TuiApp {
             Span::styled("Total: ", Style::default().fg(Color::White)),
             Span::styled(format!("{total} "), Style::default().fg(Color::Cyan)),
             Span::raw("| "),
-            Span::styled("Completed: ", Style::default().fg(Color::White)),
+            Span::styled("Done: ", Style::default().fg(Color::White)),
             Span::styled(format!("{completed} "), Style::default().fg(Color::Yellow)),
             Span::raw("| "),
-            Span::styled("Success: ", Style::default().fg(Color::White)),
+            Span::styled("OK: ", Style::default().fg(Color::White)),
             Span::styled(format!("{success} "), Style::default().fg(Color::Green)),
             Span::raw("| "),
-            Span::styled("Failed: ", Style::default().fg(Color::White)),
+            Span::styled("Fail: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed} "), Style::default().fg(Color::Red)),
             Span::raw("| "),
             Span::styled(
-                "Press 'q' to force quit",
+                "j/k:move  Enter:detail  h/l:scroll  q:quit",
                 Style::default().fg(Color::DarkGray),
             ),
         ]))
@@ -187,11 +304,33 @@ impl TuiApp {
         f.render_widget(footer, chunks[2]);
     }
 
-    fn render_repos(&self, f: &mut Frame, area: Rect) {
+    fn render_repos(&mut self, f: &mut Frame, area: Rect) {
         let repos = self.repos.lock().unwrap();
 
+        // Each repo takes 2 lines (status + progress bar), no blank line between
+        let lines_per_repo = 2;
+        let visible_height = area.height.saturating_sub(2) as usize; // subtract borders
+        let visible_repos = visible_height / lines_per_repo;
+
+        // Adjust scroll_offset to keep selected visible
+        if self.selected < self.scroll_offset {
+            self.scroll_offset = self.selected;
+        }
+        if visible_repos > 0 && self.selected >= self.scroll_offset + visible_repos {
+            self.scroll_offset = self.selected - visible_repos + 1;
+        }
+        let scroll_offset = self.scroll_offset;
+
         let mut lines = vec![];
-        for repo in repos.iter() {
+        let end = (scroll_offset + visible_repos).min(repos.len());
+
+        for (i, repo) in repos
+            .iter()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(end - scroll_offset)
+        {
+            let is_selected = i == self.selected;
             let (status_icon, status_color) = match repo.status {
                 RepoStatus::Pending => ("⏸", Color::DarkGray),
                 RepoStatus::Running => ("⚙", Color::Yellow),
@@ -199,31 +338,38 @@ impl TuiApp {
                 RepoStatus::Failed => ("✗", Color::Red),
             };
 
+            let name_style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            };
+
+            let selector = if is_selected { "▸" } else { " " };
+
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!(" {status_icon} "),
+                    format!("{selector}{status_icon} "),
                     Style::default()
                         .fg(status_color)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    format!("{:40}", repo.name),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!("{:36}", repo.name), name_style),
                 Span::styled(
                     format!(" {}", repo.message),
                     Style::default().fg(Color::White),
                 ),
             ]));
 
-            // Progress bar line
-            let bar_width = 50;
+            // Progress bar
+            let bar_width = 40;
             let filled = (bar_width as f32 * repo.progress as f32 / 100.0) as usize;
             let empty = bar_width - filled;
             let bar = format!(
-                " [{}{}] {}%",
+                "  [{}{}] {:>3}%",
                 "█".repeat(filled),
                 "░".repeat(empty),
                 repo.progress
@@ -238,18 +384,59 @@ impl TuiApp {
                     RepoStatus::Pending => Color::DarkGray,
                 }),
             )));
-
-            lines.push(Line::from("")); // Empty line between repos
         }
+
+        // Scroll indicator in title
+        let scroll_info = if repos.len() > visible_repos && visible_repos > 0 {
+            format!(
+                " Repositories [{}-{}/{}] ",
+                scroll_offset + 1,
+                end,
+                repos.len()
+            )
+        } else {
+            format!(" Repositories ({}) ", repos.len())
+        };
+
+        let paragraph = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(scroll_info)
+                .style(Style::default()),
+        );
+
+        f.render_widget(paragraph, area);
+    }
+
+    fn render_detail(&self, f: &mut Frame, area: Rect) {
+        let repos = self.repos.lock().unwrap();
+
+        let (title, content) = if let Some(repo) = repos.get(self.selected) {
+            let title = format!(" {} ", repo.name);
+            let text = if repo.output.is_empty() {
+                repo.message.clone()
+            } else {
+                repo.output.clone()
+            };
+            (title, text)
+        } else {
+            (
+                " Detail ".to_string(),
+                "No repository selected.".to_string(),
+            )
+        };
+
+        let lines: Vec<Line> = content.lines().map(|l| Line::from(l.to_string())).collect();
 
         let paragraph = Paragraph::new(lines)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Repositories ")
+                    .title(title)
                     .style(Style::default()),
             )
-            .style(Style::default().bg(Color::Black));
+            .wrap(Wrap { trim: false })
+            .scroll((self.detail_scroll, 0));
 
         f.render_widget(paragraph, area);
     }
@@ -267,5 +454,15 @@ pub fn update_repo_status(
         repo.status = status;
         repo.message = message.to_string();
         repo.progress = progress;
+    }
+}
+
+pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str, output: &str) {
+    let mut repos = repos.lock().unwrap();
+    if let Some(repo) = repos.iter_mut().find(|r| r.name == repo_name) {
+        if !repo.output.is_empty() {
+            repo.output.push('\n');
+        }
+        repo.output.push_str(output);
     }
 }

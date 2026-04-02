@@ -6,13 +6,50 @@ mod tui;
 use git_controller::GitController;
 use std::env;
 use std::fs;
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
-use tui::{update_repo_status, RepoStatus, TuiApp};
+use tui::{append_repo_output, update_repo_status, RepoStatus, TuiApp};
+
+struct Semaphore {
+    state: Mutex<usize>,
+    condvar: Condvar,
+}
+
+impl Semaphore {
+    fn new(permits: usize) -> Self {
+        Semaphore {
+            state: Mutex::new(permits),
+            condvar: Condvar::new(),
+        }
+    }
+
+    fn acquire(self: &Arc<Self>) -> SemaphoreGuard {
+        let mut count = self.state.lock().unwrap();
+        while *count == 0 {
+            count = self.condvar.wait(count).unwrap();
+        }
+        *count -= 1;
+        SemaphoreGuard {
+            sem: Arc::clone(self),
+        }
+    }
+}
+
+struct SemaphoreGuard {
+    sem: Arc<Semaphore>,
+}
+
+impl Drop for SemaphoreGuard {
+    fn drop(&mut self) {
+        let mut count = self.sem.state.lock().unwrap();
+        *count += 1;
+        self.sem.condvar.notify_one();
+    }
+}
 
 fn main() {
-    // Load settings
-    let gitp_setting = match setting_util::load() {
+    let setting = match setting_util::load() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -20,21 +57,16 @@ fn main() {
         }
     };
 
-    // Parse command line arguments
     let args: Vec<String> = env::args().skip(1).collect();
 
-    // Interactive mode or one-shot mode
     if args.is_empty() {
-        // Interactive mode
         loop {
             match interactive::run_interactive_mode() {
                 Ok(cmd_args) => {
                     if cmd_args.is_empty() {
-                        // User exited
                         break;
                     }
-                    // Execute command
-                    if let Err(e) = execute_command(&gitp_setting, &cmd_args) {
+                    if let Err(e) = execute_command(&setting, &cmd_args) {
                         eprintln!("Error: {e}");
                     }
                 }
@@ -44,89 +76,80 @@ fn main() {
                 }
             }
         }
-    } else {
-        // One-shot mode
-        if let Err(e) = execute_command(&gitp_setting, &args) {
-            eprintln!("Error: {e}");
-            std::process::exit(1);
-        }
+    } else if let Err(e) = execute_command(&setting, &args) {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
     }
 }
 
-fn execute_command(
-    gitp_setting: &setting_util::GitpSetting,
-    args: &[String],
-) -> Result<(), String> {
+fn parse_jobs(args: &[String], default: usize) -> (usize, Vec<String>) {
+    let mut jobs = default;
+    let mut filtered = Vec::new();
+    let mut skip_next = false;
+
+    for (i, arg) in args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if (arg == "-j" || arg == "--jobs") && i + 1 < args.len() {
+            if let Ok(n) = args[i + 1].parse::<usize>() {
+                jobs = n.max(1);
+            }
+            skip_next = true;
+        } else if arg.starts_with("-j") && arg.len() > 2 {
+            if let Ok(n) = arg[2..].parse::<usize>() {
+                jobs = n.max(1);
+            }
+        } else {
+            filtered.push(arg.clone());
+        }
+    }
+
+    (jobs, filtered)
+}
+
+fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Result<(), String> {
     if args.is_empty() {
         return Ok(());
     }
 
-    let command = &args[0];
-    let is_serial = args.len() > 1 && args[1] == "serial";
+    let (jobs, filtered_args) = parse_jobs(args, setting.jobs);
 
-    // Collect enabled repositories
-    let enabled_repos: Vec<_> = gitp_setting.repos.iter().filter(|r| r.enabled).collect();
+    if filtered_args.is_empty() {
+        return Ok(());
+    }
+
+    let command = &filtered_args[0];
+
+    let enabled_repos: Vec<_> = setting.repos.iter().filter(|r| r.enabled).collect();
 
     if enabled_repos.is_empty() {
         println!("No enabled repositories found in configuration.");
         return Ok(());
     }
 
-    // Extract repository names for TUI
+    let base_dir = env::current_dir().map_err(|e| format!("Cannot get current directory: {e}"))?;
+
     let repo_names: Vec<String> = enabled_repos
         .iter()
         .map(|r| extract_repo_name(&r.remote))
         .collect();
 
-    // Create TUI app
     let mut tui_app = TuiApp::new(repo_names);
     let repos_handle = tui_app.get_repos_handle();
+    let semaphore = Arc::new(Semaphore::new(jobs));
 
-    // Spawn worker threads based on command
     match command.as_str() {
         "clone" | "clo" | "cl" => {
-            spawn_clone_workers(gitp_setting, &enabled_repos, repos_handle.clone());
+            spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
         }
         "pull" | "pul" | "pu" => {
-            spawn_pull_workers(gitp_setting, &enabled_repos, repos_handle.clone());
+            spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
         }
         "push" | "pus" | "ps" => {
-            spawn_push_workers(gitp_setting, &enabled_repos, repos_handle.clone());
-        }
-        "config" | "conf" | "cfg" => {
-            // Check for subcommand
-            if args.len() < 2 {
-                // No subcommand - apply all configs from YAML
-                spawn_config_all_workers(gitp_setting, &enabled_repos, repos_handle.clone());
-            } else {
-                let subcommand = &args[1];
-                if subcommand == "user" || subcommand == "u" || subcommand == "usr" {
-                    // config user - apply user.name and user.email only
-                    let is_serial_config = args.len() > 2 && args[2] == "serial";
-                    spawn_config_user_workers(gitp_setting, &enabled_repos, repos_handle.clone());
-
-                    if let Err(e) = tui_app.run(!is_serial_config) {
-                        return Err(format!("TUI error: {e:?}"));
-                    }
-                    return Ok(());
-                } else if subcommand == "serial" {
-                    // config serial - apply all configs in serial mode
-                    spawn_config_all_workers(gitp_setting, &enabled_repos, repos_handle.clone());
-
-                    if let Err(e) = tui_app.run(false) {
-                        return Err(format!("TUI error: {e:?}"));
-                    }
-                    return Ok(());
-                } else {
-                    return Err(format!("Unknown subcommand: config {subcommand}"));
-                }
-            }
-
-            // Run TUI for config without subcommand
-            if let Err(e) = tui_app.run(true) {
-                return Err(format!("TUI error: {e:?}"));
-            }
-            return Ok(());
+            spawn_push_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
         }
         "help" | "?" => {
             show_help();
@@ -137,8 +160,7 @@ fn execute_command(
         }
     }
 
-    // Run TUI
-    if let Err(e) = tui_app.run(!is_serial) {
+    if let Err(e) = tui_app.run() {
         return Err(format!("TUI error: {e:?}"));
     }
 
@@ -146,41 +168,44 @@ fn execute_command(
 }
 
 fn show_help() {
-    println!("\n\x1b[1;36mgitp\x1b[0m - Git Multiple Repository Manager\n");
+    println!("\n\x1b[1;36mgitpp\x1b[0m - Git Personal Parallel Manager\n");
     println!("\x1b[1;36mUsage:\x1b[0m");
-    println!("  gitp                   Start interactive mode");
-    println!("  gitp <command> [opts]  Execute command and exit\n");
+    println!("  gitpp                      Start interactive mode");
+    println!("  gitpp <command> [options]   Execute command and exit\n");
     println!("\x1b[1;36mCommands:\x1b[0m");
-    println!("  \x1b[1;33mclone\x1b[0m [serial]        Clone all enabled repositories");
-    println!("  \x1b[1;33mpull\x1b[0m [serial]         Pull all enabled repositories");
-    println!("  \x1b[1;33mpush\x1b[0m [serial]         Push all enabled repositories");
-    println!("  \x1b[1;33mconfig user\x1b[0m [serial]  Set user.name and user.email for all repositories");
-    println!("  \x1b[1;33mhelp\x1b[0m                  Show this help message\n");
+    println!("  \x1b[1;33mclone\x1b[0m                Clone all enabled repositories");
+    println!("  \x1b[1;33mpull\x1b[0m                 Pull all enabled repositories");
+    println!("  \x1b[1;33mpush\x1b[0m                 Push all enabled repositories");
+    println!("  \x1b[1;33mhelp\x1b[0m                 Show this help message\n");
     println!("\x1b[1;36mOptions:\x1b[0m");
     println!(
-        "  \x1b[1;33mserial\x1b[0m                 Execute sequentially (default: parallel)\n"
+        "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m      Max parallel jobs (default: from gitpp.yaml, or 20)\n"
     );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone");
     println!("  pul, pu  → pull");
-    println!("  pus, ps  → push");
-    println!("  conf, cfg → config");
-    println!("  u, usr   → user (for config subcommand)\n");
+    println!("  pus, ps  → push\n");
 }
 
 fn spawn_clone_workers(
-    setting: &setting_util::GitpSetting,
+    setting: &setting_util::GitppSetting,
     repos: &[&setting_util::Repos],
-    repos_handle: Arc<std::sync::Mutex<Vec<tui::RepoProgress>>>,
+    repos_handle: Arc<Mutex<Vec<tui::RepoProgress>>>,
+    semaphore: &Arc<Semaphore>,
+    base_dir: &Path,
 ) {
     for repo in repos {
-        let repo_clone = (*repo).clone();
+        let repo_data = (*repo).clone();
         let user_name = setting.user.name.clone();
         let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
+        let sem = Arc::clone(semaphore);
+        let base = base_dir.to_path_buf();
 
         thread::spawn(move || {
+            let _guard = sem.acquire();
+
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -190,8 +215,8 @@ fn spawn_clone_workers(
             );
 
             let git = GitController::new();
+            let group_dir = base.join(&repo_data.group);
 
-            // Create group directory
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -199,7 +224,7 @@ fn spawn_clone_workers(
                 "Creating directory...",
                 20,
             );
-            if let Err(e) = fs::create_dir_all(&repo_clone.group) {
+            if let Err(e) = fs::create_dir_all(&group_dir) {
                 update_repo_status(
                     &repos_handle,
                     &repo_name,
@@ -210,20 +235,6 @@ fn spawn_clone_workers(
                 return;
             }
 
-            // Change to group directory
-            let original_dir = env::current_dir().unwrap();
-            if let Err(e) = env::set_current_dir(&repo_clone.group) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Error: {e}"),
-                    100,
-                );
-                return;
-            }
-
-            // Clone
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -231,9 +242,10 @@ fn spawn_clone_workers(
                 "Cloning...",
                 40,
             );
-            let result = git.git_clone(&repo_clone.remote, &repo_clone.branch);
+            let result = git.git_clone(&group_dir, &repo_data.remote, &repo_data.branch);
+            append_repo_output(&repos_handle, &repo_name, &result.output);
 
-            // Change into cloned repo
+            let repo_dir = group_dir.join(&repo_name);
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -241,43 +253,39 @@ fn spawn_clone_workers(
                 "Configuring...",
                 80,
             );
-            if let Err(e) = env::set_current_dir(extract_repo_name(&repo_clone.remote)) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Error: {e}"),
-                    100,
-                );
-                env::set_current_dir(original_dir).ok();
-                return;
+
+            if repo_dir.exists() {
+                git.git_config(&repo_dir, &user_name, &user_email);
             }
 
-            git.git_config(&user_name, &user_email);
-            env::set_current_dir(original_dir).ok();
-
-            if result.contains("fatal") || result.contains("error") {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
-            } else {
+            if result.success {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+            } else {
+                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }
         });
     }
 }
 
 fn spawn_pull_workers(
-    setting: &setting_util::GitpSetting,
+    setting: &setting_util::GitppSetting,
     repos: &[&setting_util::Repos],
-    repos_handle: Arc<std::sync::Mutex<Vec<tui::RepoProgress>>>,
+    repos_handle: Arc<Mutex<Vec<tui::RepoProgress>>>,
+    semaphore: &Arc<Semaphore>,
+    base_dir: &Path,
 ) {
     for repo in repos {
-        let repo_clone = (*repo).clone();
+        let repo_data = (*repo).clone();
         let user_name = setting.user.name.clone();
         let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
+        let sem = Arc::clone(semaphore);
+        let base = base_dir.to_path_buf();
 
         thread::spawn(move || {
+            let _guard = sem.acquire();
+
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -287,19 +295,14 @@ fn spawn_pull_workers(
             );
 
             let git = GitController::new();
-            let repo_path = format!(
-                "{}/{}",
-                repo_clone.group,
-                extract_repo_name(&repo_clone.remote)
-            );
+            let repo_dir = base.join(&repo_data.group).join(&repo_name);
 
-            let original_dir = env::current_dir().unwrap();
-            if let Err(e) = env::set_current_dir(&repo_path) {
+            if !repo_dir.exists() {
                 update_repo_status(
                     &repos_handle,
                     &repo_name,
                     RepoStatus::Failed,
-                    &format!("Error: {e}"),
+                    &format!("Directory not found: {}", repo_dir.display()),
                     100,
                 );
                 return;
@@ -312,7 +315,7 @@ fn spawn_pull_workers(
                 "Configuring...",
                 30,
             );
-            git.git_config(&user_name, &user_email);
+            git.git_config(&repo_dir, &user_name, &user_email);
 
             update_repo_status(
                 &repos_handle,
@@ -321,23 +324,24 @@ fn spawn_pull_workers(
                 "Pulling...",
                 50,
             );
-            let result = git.git_pull();
+            let result = git.git_pull(&repo_dir);
+            append_repo_output(&repos_handle, &repo_name, &result.output);
 
-            env::set_current_dir(original_dir).ok();
-
-            if result.contains("fatal") || result.contains("error") {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
-            } else {
+            if result.success {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+            } else {
+                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }
         });
     }
 }
 
 fn spawn_push_workers(
-    setting: &setting_util::GitpSetting,
+    setting: &setting_util::GitppSetting,
     repos: &[&setting_util::Repos],
-    repos_handle: Arc<std::sync::Mutex<Vec<tui::RepoProgress>>>,
+    repos_handle: Arc<Mutex<Vec<tui::RepoProgress>>>,
+    semaphore: &Arc<Semaphore>,
+    base_dir: &Path,
 ) {
     let commit_message = setting
         .comments
@@ -346,14 +350,18 @@ fn spawn_push_workers(
         .clone();
 
     for repo in repos {
-        let repo_clone = (*repo).clone();
+        let repo_data = (*repo).clone();
         let user_name = setting.user.name.clone();
         let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
         let commit_msg = commit_message.clone();
+        let sem = Arc::clone(semaphore);
+        let base = base_dir.to_path_buf();
 
         thread::spawn(move || {
+            let _guard = sem.acquire();
+
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -363,19 +371,14 @@ fn spawn_push_workers(
             );
 
             let git = GitController::new();
-            let repo_path = format!(
-                "{}/{}",
-                repo_clone.group,
-                extract_repo_name(&repo_clone.remote)
-            );
+            let repo_dir = base.join(&repo_data.group).join(&repo_name);
 
-            let original_dir = env::current_dir().unwrap();
-            if let Err(e) = env::set_current_dir(&repo_path) {
+            if !repo_dir.exists() {
                 update_repo_status(
                     &repos_handle,
                     &repo_name,
                     RepoStatus::Failed,
-                    &format!("Error: {e}"),
+                    &format!("Directory not found: {}", repo_dir.display()),
                     100,
                 );
                 return;
@@ -388,187 +391,24 @@ fn spawn_push_workers(
                 "Configuring...",
                 20,
             );
-            git.git_config(&user_name, &user_email);
+            git.git_config(&repo_dir, &user_name, &user_email);
 
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Adding files...",
-                40,
-            );
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Committing...",
-                60,
-            );
             update_repo_status(
                 &repos_handle,
                 &repo_name,
                 RepoStatus::Running,
                 "Pushing...",
-                80,
+                50,
             );
 
-            let result = git.git_push(&commit_msg);
+            let result = git.git_push(&repo_dir, &commit_msg);
+            append_repo_output(&repos_handle, &repo_name, &result.output);
 
-            env::set_current_dir(original_dir).ok();
-
-            if result.contains("fatal") || result.contains("error") {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
-            } else {
+            if result.success {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+            } else {
+                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }
-        });
-    }
-}
-
-fn spawn_config_all_workers(
-    setting: &setting_util::GitpSetting,
-    repos: &[&setting_util::Repos],
-    repos_handle: Arc<std::sync::Mutex<Vec<tui::RepoProgress>>>,
-) {
-    for repo in repos {
-        let repo_clone = (*repo).clone();
-        let user_name = setting.user.name.clone();
-        let user_email = setting.user.email.clone();
-        let configs = setting.config.clone();
-        let repos_handle = Arc::clone(&repos_handle);
-        let repo_name = extract_repo_name(&repo.remote);
-
-        thread::spawn(move || {
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Starting...",
-                10,
-            );
-
-            let git = GitController::new();
-            let repo_path = format!(
-                "{}/{}",
-                repo_clone.group,
-                extract_repo_name(&repo_clone.remote)
-            );
-
-            let original_dir = env::current_dir().unwrap();
-            if let Err(e) = env::set_current_dir(&repo_path) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Error: {e}"),
-                    100,
-                );
-                return;
-            }
-
-            // Apply user.name and user.email
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Setting user...",
-                20,
-            );
-            git.git_config(&user_name, &user_email);
-
-            // Apply all configs from YAML
-            let total_configs = configs.len();
-            for (i, (key, value)) in configs.iter().enumerate() {
-                let progress = 20 + ((i + 1) * 70 / total_configs.max(1)) as u16;
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Running,
-                    &format!("Setting {key}..."),
-                    progress,
-                );
-                git.git_config_raw(key, value);
-            }
-
-            env::set_current_dir(original_dir).ok();
-
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Success,
-                "Configured",
-                100,
-            );
-        });
-    }
-}
-
-fn spawn_config_user_workers(
-    setting: &setting_util::GitpSetting,
-    repos: &[&setting_util::Repos],
-    repos_handle: Arc<std::sync::Mutex<Vec<tui::RepoProgress>>>,
-) {
-    for repo in repos {
-        let repo_clone = (*repo).clone();
-        let user_name = setting.user.name.clone();
-        let user_email = setting.user.email.clone();
-        let repos_handle = Arc::clone(&repos_handle);
-        let repo_name = extract_repo_name(&repo.remote);
-
-        thread::spawn(move || {
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Starting...",
-                10,
-            );
-
-            let git = GitController::new();
-            let repo_path = format!(
-                "{}/{}",
-                repo_clone.group,
-                extract_repo_name(&repo_clone.remote)
-            );
-
-            let original_dir = env::current_dir().unwrap();
-            if let Err(e) = env::set_current_dir(&repo_path) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Error: {e}"),
-                    100,
-                );
-                return;
-            }
-
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Setting user.name...",
-                40,
-            );
-            git.git_config(&user_name, &user_email);
-
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Running,
-                "Setting user.email...",
-                80,
-            );
-
-            env::set_current_dir(original_dir).ok();
-
-            update_repo_status(
-                &repos_handle,
-                &repo_name,
-                RepoStatus::Success,
-                "Configured",
-                100,
-            );
         });
     }
 }

@@ -3,8 +3,9 @@ user:
   email: 3541096+kako-jun@users.noreply.github.com
 comments:
   default: update.
+jobs: 20
 repos:
   - enabled: true
-    remote: git@github.com:kako-jun/gitp.git
+    remote: git@github.com:kako-jun/gitpp.git
     branch: main
     group: "2024"

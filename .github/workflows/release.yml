@@ -24,24 +24,24 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            binary: gitp
-            asset_name: gitp-linux-x86_64
+            binary: gitpp
+            asset_name: gitpp-linux-x86_64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            binary: gitp
-            asset_name: gitp-linux-x86_64-musl
+            binary: gitpp
+            asset_name: gitpp-linux-x86_64-musl
           - os: macos-latest
             target: x86_64-apple-darwin
-            binary: gitp
-            asset_name: gitp-macos-x86_64
+            binary: gitpp
+            asset_name: gitpp-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            binary: gitp
-            asset_name: gitp-macos-aarch64
+            binary: gitpp
+            asset_name: gitpp-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            binary: gitp.exe
-            asset_name: gitp-windows-x86_64.exe
+            binary: gitpp.exe
+            asset_name: gitpp-windows-x86_64.exe
 
     steps:
       - uses: actions/checkout@v4
