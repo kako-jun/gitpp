@@ -101,7 +101,7 @@ impl TuiApp {
         loop {
             terminal.draw(|f| self.ui(f))?;
 
-            let repos = self.repos.lock().unwrap();
+            let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
             let all_done = repos
                 .iter()
                 .all(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed);
@@ -157,7 +157,7 @@ impl TuiApp {
     }
 
     fn handle_key(&mut self, key: KeyCode) {
-        let repo_count = self.repos.lock().unwrap().len();
+        let repo_count = self.repos.lock().unwrap_or_else(|e| e.into_inner()).len();
         if repo_count == 0 {
             return;
         }
@@ -184,7 +184,8 @@ impl TuiApp {
                 self.detail_scroll = 0;
             }
             KeyCode::Char('l') | KeyCode::Right if self.show_detail => {
-                self.detail_scroll = self.detail_scroll.saturating_add(3);
+                let max_scroll = self.detail_line_count().saturating_sub(1) as u16;
+                self.detail_scroll = self.detail_scroll.saturating_add(3).min(max_scroll);
             }
             KeyCode::Char('h') | KeyCode::Left if self.show_detail => {
                 self.detail_scroll = self.detail_scroll.saturating_sub(3);
@@ -201,7 +202,7 @@ impl TuiApp {
     }
 
     fn print_summary(&self) {
-        let repos = self.repos.lock().unwrap();
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let total = repos.len();
         let success_count = repos
             .iter()
@@ -279,7 +280,7 @@ impl TuiApp {
         }
 
         // Footer
-        let repos = self.repos.lock().unwrap();
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let total = repos.len();
         let completed = repos
             .iter()
@@ -318,7 +319,7 @@ impl TuiApp {
     }
 
     fn render_repos(&mut self, f: &mut Frame, area: Rect) {
-        let repos = self.repos.lock().unwrap();
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
 
         // Each repo takes 2 lines (status + progress bar), no blank line between
         let lines_per_repo = 2;
@@ -370,7 +371,14 @@ impl TuiApp {
                         .fg(status_color)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(format!("{:36}", repo.name), name_style),
+                Span::styled(
+                    if repo.name.len() > 36 {
+                        format!("{}…", &repo.name[..35])
+                    } else {
+                        format!("{:36}", repo.name)
+                    },
+                    name_style,
+                ),
                 Span::styled(
                     format!(" {}", repo.message),
                     Style::default().fg(Color::White),
@@ -421,8 +429,22 @@ impl TuiApp {
         f.render_widget(paragraph, area);
     }
 
+    fn detail_line_count(&self) -> usize {
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(repo) = repos.get(self.selected) {
+            let text = if repo.output.is_empty() {
+                &repo.message
+            } else {
+                &repo.output
+            };
+            text.lines().count()
+        } else {
+            0
+        }
+    }
+
     fn render_detail(&self, f: &mut Frame, area: Rect) {
-        let repos = self.repos.lock().unwrap();
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
 
         let (title, content) = if let Some(repo) = repos.get(self.selected) {
             let title = format!(" {} ", repo.name);
@@ -462,7 +484,7 @@ pub fn update_repo_status(
     message: &str,
     progress: u16,
 ) {
-    let mut repos = repos.lock().unwrap();
+    let mut repos = repos.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(repo) = repos.iter_mut().find(|r| r.name == repo_name) {
         repo.status = status;
         repo.message = message.to_string();
@@ -471,7 +493,7 @@ pub fn update_repo_status(
 }
 
 pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str, output: &str) {
-    let mut repos = repos.lock().unwrap();
+    let mut repos = repos.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(repo) = repos.iter_mut().find(|r| r.name == repo_name) {
         if !repo.output.is_empty() {
             repo.output.push('\n');

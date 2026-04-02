@@ -43,8 +43,14 @@ impl GitController {
 
         let commit_result = self.exec_git(dir, &["commit", "-m", commit_message]);
         all_output.push_str(&commit_result.output);
-        // "nothing to commit" exits non-zero but is not a real failure
-        if !commit_result.success && !commit_result.output.contains("nothing to commit") {
+        if !commit_result.success {
+            // "nothing to commit" is not a failure — just skip push
+            if commit_result.output.contains("nothing to commit") {
+                return GitResult {
+                    output: all_output,
+                    success: true,
+                };
+            }
             return GitResult {
                 output: all_output,
                 success: false,

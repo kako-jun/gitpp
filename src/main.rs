@@ -253,6 +253,19 @@ fn spawn_clone_workers(
                 return;
             }
 
+            let repo_dir = group_dir.join(&repo_name);
+            if repo_dir.exists() {
+                update_repo_status(
+                    &repos_handle,
+                    &repo_name,
+                    RepoStatus::Success,
+                    "Already cloned",
+                    100,
+                );
+                git.git_config(&repo_dir, &user_name, &user_email);
+                return;
+            }
+
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -263,7 +276,6 @@ fn spawn_clone_workers(
             let result = git.git_clone(&group_dir, &repo_data.remote, &repo_data.branch);
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
-            let repo_dir = group_dir.join(&repo_name);
             update_repo_status(
                 &repos_handle,
                 &repo_name,
@@ -361,10 +373,11 @@ fn spawn_push_workers(
     semaphore: &Arc<Semaphore>,
     base_dir: &Path,
 ) {
+    let default_msg = "update.".to_string();
     let commit_message = setting
         .comments
         .get("default")
-        .unwrap_or(&"update.".to_string())
+        .unwrap_or(&default_msg)
         .clone();
 
     for repo in repos {
@@ -432,7 +445,8 @@ fn spawn_push_workers(
 }
 
 fn extract_repo_name(remote_url: &str) -> String {
-    let parts: Vec<&str> = remote_url.split('/').collect();
+    let url = remote_url.trim_end_matches('/');
+    let parts: Vec<&str> = url.split('/').collect();
     let last_part = parts.last().unwrap_or(&"");
     last_part.trim_end_matches(".git").to_string()
 }
