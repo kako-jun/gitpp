@@ -261,7 +261,11 @@ impl TuiApp {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::raw(" - Git Personal Parallel Manager"),
+            Span::raw("  "),
+            Span::styled(
+                "j/k:move  Enter:detail  h/l:scroll  q:quit",
+                Style::default().fg(Color::Gray),
+            ),
         ])])
         .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
@@ -308,11 +312,6 @@ impl TuiApp {
             Span::raw("| "),
             Span::styled("Fail: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed} "), Style::default().fg(Color::Red)),
-            Span::raw("| "),
-            Span::styled(
-                "j/k:move  Enter:detail  h/l:scroll  q:quit",
-                Style::default().fg(Color::DarkGray),
-            ),
         ]))
         .block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, chunks[2]);
