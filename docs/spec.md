@@ -21,11 +21,21 @@
 
 | コマンド | 実行される git コマンド列 | 備考 |
 |---|---|---|
-| clone | `git clone <remote> -b <branch>` | group ディレクトリに cd してから実行 |
+| clone | `git clone <remote> -b <branch>` | group ディレクトリ内に実行 |
 | pull | `git pull` | コンフリクト時は自動解決しない（Failed 扱い） |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | コミットメッセージは `comments.default` 固定 |
 
 全操作の前後で YAML に書かれた user.name / user.email が各リポの `.git/config` に自動適用される。
+
+### clone の重複検出
+
+clone 先ディレクトリに `.git` が既に存在する場合、`git remote get-url origin` で実際の remote URL を取得し、YAML の remote と比較する。
+
+| 状況 | 結果 |
+|---|---|
+| `.git` なし | 通常通り clone を実行 |
+| `.git` あり + remote 一致 | "Already cloned" 表示（Success）。user config だけ適用 |
+| `.git` あり + remote 不一致 | "Remote mismatch" 表示（Failed）。期待値と実際の remote を出力 |
 
 ## 動作モード
 
@@ -132,6 +142,15 @@ ratatui + crossterm によるフルスクリーン TUI。
 | Esc | 詳細ペインを閉じる（ペイン非表示時はブラウズモード終了） |
 | q | 強制終了 |
 
+### 完了後の動作
+
+全リポジトリの処理が完了すると:
+1. **2秒間**キー操作を待つ
+2. 操作なし → 自動終了し、stdout にサマリーを出力
+3. 何かキーを押す → ブラウズモードに移行（j/k で結果を見回せる、q または Esc で終了）
+
+実行中でも `q` を押せばいつでも即時終了できる。
+
 ### ステータス遷移
 
 | ステータス | アイコン | 色 | 意味 |
@@ -146,7 +165,8 @@ ratatui + crossterm によるフルスクリーン TUI。
 git コマンドの exit code で判定。非ゼロなら Failed。
 
 push 時は add → commit → push を順に実行し、途中で失敗したら以降をスキップする。
-ただし `git commit` の "nothing to commit" は正常扱い（そのまま push に進む）。
+`git commit` が "nothing to commit" で非ゼロ終了した場合は正常扱いとし、push もスキップして Success を返す（変更がないのに push する無駄を避ける）。
+この判定のみ exit code + 出力文字列の複合判定を使う。
 
 ### TUI 終了後のサマリー出力
 

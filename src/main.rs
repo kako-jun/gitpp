@@ -25,9 +25,9 @@ impl Semaphore {
     }
 
     fn acquire(self: &Arc<Self>) -> SemaphoreGuard {
-        let mut count = self.state.lock().unwrap();
+        let mut count = self.state.lock().unwrap_or_else(|e| e.into_inner());
         while *count == 0 {
-            count = self.condvar.wait(count).unwrap();
+            count = self.condvar.wait(count).unwrap_or_else(|e| e.into_inner());
         }
         *count -= 1;
         SemaphoreGuard {
@@ -42,7 +42,7 @@ struct SemaphoreGuard {
 
 impl Drop for SemaphoreGuard {
     fn drop(&mut self) {
-        let mut count = self.sem.state.lock().unwrap();
+        let mut count = self.sem.state.lock().unwrap_or_else(|e| e.into_inner());
         *count += 1;
         self.sem.condvar.notify_one();
     }
@@ -254,15 +254,30 @@ fn spawn_clone_workers(
             }
 
             let repo_dir = group_dir.join(&repo_name);
-            if repo_dir.exists() {
+            if repo_dir.join(".git").exists() {
+                let actual_remote = git.git_remote_url(&repo_dir);
+                if actual_remote == repo_data.remote {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Success,
+                        "Already cloned",
+                        100,
+                    );
+                    git.git_config(&repo_dir, &user_name, &user_email);
+                    return;
+                }
+                // Directory exists but remote doesn't match
                 update_repo_status(
                     &repos_handle,
                     &repo_name,
-                    RepoStatus::Success,
-                    "Already cloned",
+                    RepoStatus::Failed,
+                    &format!(
+                        "Remote mismatch: expected {}, found {}",
+                        repo_data.remote, actual_remote
+                    ),
                     100,
                 );
-                git.git_config(&repo_dir, &user_name, &user_email);
                 return;
             }
 

@@ -66,6 +66,11 @@ impl GitController {
         }
     }
 
+    pub fn git_remote_url(&self, dir: &Path) -> String {
+        let result = self.exec_git(dir, &["remote", "get-url", "origin"]);
+        result.output.trim().to_string()
+    }
+
     pub fn git_config(&self, dir: &Path, name: &str, email: &str) {
         self.exec_git(dir, &["config", "user.name", name]);
         self.exec_git(dir, &["config", "user.email", email]);
