@@ -2,6 +2,11 @@
 name = "gitpp"
 version = "0.1.0"
 edition = "2021"
+description = "Git Personal Parallel Manager — manage 100+ Git repos with one command"
+license = "MIT"
+repository = "https://github.com/kako-jun/gitpp"
+keywords = ["git", "tui", "parallel", "multi-repo"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 encoding_rs = "0.8.34"
