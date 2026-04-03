@@ -11,6 +11,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use tui::{append_repo_output, update_repo_status, RepoStatus, TuiApp};
 
+#[derive(Debug)]
 struct GlobalOptions {
     jobs: Option<usize>,
     config_path: Option<PathBuf>,
@@ -87,9 +88,7 @@ fn main() {
                     if cmd_args.is_empty() {
                         break;
                     }
-                    if let Err(e) =
-                        execute_command(&setting, &cmd_args, &base_dir, jobs_override)
-                    {
+                    if let Err(e) = execute_command(&setting, &cmd_args, &base_dir, jobs_override) {
                         eprintln!("Error: {e}");
                     }
                 }
@@ -99,9 +98,7 @@ fn main() {
                 }
             }
         }
-    } else if let Err(e) =
-        execute_command(&setting, &global_opts.rest, &base_dir, jobs_override)
-    {
+    } else if let Err(e) = execute_command(&setting, &global_opts.rest, &base_dir, jobs_override) {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
@@ -129,11 +126,19 @@ fn parse_global_options(args: &[String]) -> GlobalOptions {
             if let Ok(n) = arg[2..].parse::<usize>() {
                 jobs = Some(n.max(1));
             }
-        } else if (arg == "-c" || arg == "--config") && i + 1 < args.len() {
-            config_path = Some(PathBuf::from(&args[i + 1]));
+        } else if arg == "-c" || arg == "--config" {
+            if i + 1 >= args.len() {
+                eprintln!("Error: {arg} requires a value");
+                std::process::exit(1);
+            }
+            config_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
             skip_next = true;
-        } else if (arg == "-r" || arg == "--root") && i + 1 < args.len() {
-            root_path = Some(PathBuf::from(&args[i + 1]));
+        } else if arg == "-r" || arg == "--root" {
+            if i + 1 >= args.len() {
+                eprintln!("Error: {arg} requires a value");
+                std::process::exit(1);
+            }
+            root_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
             skip_next = true;
         } else {
             rest.push(arg.clone());
