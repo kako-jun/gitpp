@@ -1,120 +1,124 @@
-# gitpp 仕様
+# gitpp Specification
 
-最終更新: 2026-04-02
+Last updated: 2026-04-03
 
-## コマンド
+## Commands
 
-| コマンド | ショートカット | 動作 |
+| Command | Aliases | Behavior |
 |---|---|---|
-| `clone` | `clo`, `cl` | 全 enabled リポジトリを並列 clone |
-| `pull` | `pul`, `pl` | 全 enabled リポジトリを並列 pull |
-| `push` | `pus`, `ps` | 全 enabled リポジトリを並列 add → commit → push |
-| `help` | `?` | コマンド一覧を表示（TUI なし） |
+| `clone` | `clo`, `cl` | Clone all enabled repositories in parallel |
+| `pull` | `pul`, `pl` | Pull all enabled repositories in parallel |
+| `push` | `pus`, `ps` | Add → commit → push all enabled repositories in parallel |
+| `help` | `?` | Print command list (no TUI) |
 
-### オプション
+### Options
 
-| オプション | 説明 |
+| Option | Description |
 |---|---|
-| `-c PATH` / `--config PATH` | 設定ファイルのパスを指定（デフォルト: カレントディレクトリの `gitpp.yaml` / `gitpp.yml`） |
-| `-r PATH` / `--root PATH` | リポジトリ展開先のルートディレクトリを指定（デフォルト: カレントディレクトリ） |
-| `-j N` / `--jobs N` | 並列度の上限（デフォルト: gitpp.yaml の `jobs`、未指定なら 20） |
-| `-q` / `--quiet` | TUIなしモード。stdout にサマリー、stderr に進捗を出力。スクリプトやCI向け |
+| `-c PATH` / `--config PATH` | Path to config file (default: `gitpp.yaml` / `gitpp.yml` in the current directory) |
+| `-r PATH` / `--root PATH` | Root directory for repository checkout (default: current directory) |
+| `-j N` / `--jobs N` | Concurrency limit (default: `jobs` value in `gitpp.yaml`, or 20 if unset) |
+| `-q` / `--quiet` | No-TUI mode. Summary to stdout, progress to stderr. Intended for scripts and CI. |
 
-`-c`, `-r`, `-j`, `-q` はグローバルオプション（コマンドの前でも後でも指定可能）。
+`-c`, `-r`, `-j`, and `-q` are global options and may be placed before or after the subcommand.
 
-### 各コマンドが実行する git 操作
+### Git Operations per Command
 
-| コマンド | 実行される git コマンド列 | 備考 |
+| Command | Git commands executed | Notes |
 |---|---|---|
-| clone | `git clone <remote> -b <branch>` | group ディレクトリ内に実行 |
-| pull | `git pull` | コンフリクト時は自動解決しない（Failed 扱い） |
-| push | `git add -A` → `git commit -m "<msg>"` → `git push` | コミットメッセージは `comments.default` 固定 |
+| clone | `git clone <remote> -b <branch>` | Run inside the group subdirectory |
+| pull | `git pull` | Conflicts are not auto-resolved; reported as Failed |
+| push | `git add -A` → `git commit -m "<msg>"` → `git push` | Commit message is fixed to `comments.default` |
 
-### push のオプトイン設計
+### Push Opt-In Design
 
-push は全リポに `git add -A` + 固定メッセージでコミットする破壊的な操作のため、明示的なオプトインが必要。
-`comments.default` が未設定または空文字列の場合、push コマンドは `git add -A` を実行せずにエラーで停止する。
-push を有効にするには、gitpp.yaml に `comments.default` を設定する:
+Push is a destructive operation — it runs `git add -A` and commits with a fixed message across all repos —
+and therefore requires explicit opt-in.
+If `comments.default` is not set or is an empty string, the push command aborts with an error before running `git add -A`.
+To enable push, set `comments.default` in `gitpp.yaml`:
 
 ```yaml
 comments:
   default: update.
 ```
 
-`comments` セクション自体を省略した場合も push は無効になる。clone と pull は影響を受けない。
+Omitting the `comments` section entirely also disables push. Clone and pull are unaffected.
 
-全操作の前後で YAML の `config:` に書かれた git config 設定が各リポの `.git/config` に `git config --local` で自動適用される。YAML からキーを削除しても、既存リポの `.git/config` からは自動削除されない（上書きのみ）。
+Before every operation, the git config key-value pairs defined in the YAML `config:` section
+are applied to each repository's `.git/config` via `git config --local`.
+Removing a key from the YAML does not remove it from existing repositories (overwrite only, no deletion).
 
-### clone の重複検出
+### Duplicate Detection for Clone
 
-clone 先ディレクトリに `.git` が既に存在する場合、`git remote get-url origin` で実際の remote URL を取得し、YAML の remote と比較する。
+If the target directory already contains a `.git` folder, gitpp fetches the actual remote URL via
+`git remote get-url origin` and compares it against the remote specified in the YAML.
 
-| 状況 | 結果 |
+| Situation | Result |
 |---|---|
-| `.git` なし | 通常通り clone を実行 |
-| `.git` あり + remote 一致 | "Already cloned" 表示（Success）。config だけ適用 |
-| `.git` あり + remote 不一致 | "Remote mismatch" 表示（Failed）。期待値と実際の remote を出力 |
+| No `.git` present | Proceed with normal clone |
+| `.git` exists, remote matches | Display "Already cloned" (Success). Apply config only. |
+| `.git` exists, remote mismatch | Display "Remote mismatch" (Failed). Print expected vs actual remote. |
 
-## 動作モード
+## Operating Modes
 
-| モード | 起動方法 | 概要 |
+| Mode | How to start | Description |
 |---|---|---|
-| ワンショット | `gitpp <command>` | コマンドを1回実行して終了 |
-| インタラクティブ | `gitpp`（引数なし） | REPL で繰り返しコマンドを実行 |
+| One-shot | `gitpp <command>` | Execute the command once and exit |
+| Interactive | `gitpp` (no arguments) | REPL — run commands repeatedly |
 
-### インタラクティブモード
+### Interactive Mode
 
-- プロンプト: `gitpp> `（シアン太字）
-- Tab 補完: `clone`, `pull`, `push`, `help`, `exit`, `quit`
-- ヒント: 入力中に候補をインライン表示（前方一致）
-- 履歴: `~/.gitpp_history` に保存
-- 終了: `exit` / `quit` / Ctrl+D
+- Prompt: `gitpp> ` (cyan, bold)
+- Tab completion: `clone`, `pull`, `push`, `help`, `exit`, `quit`
+- Hint: inline suggestion while typing (prefix match)
+- History: saved to `~/.gitpp_history`
+- Exit: `exit` / `quit` / Ctrl+D
 
-## 設定ファイル
+## Configuration File
 
-### 検索ロジック
+### Resolution Logic
 
-1. `--config` が指定されていればそのパスを使う
-2. 指定がなければカレントディレクトリの `gitpp.yaml` を探す
-3. なければ `gitpp.yml` を探す
-4. どちらもなければエラー終了
+1. If `--config` is given, use that path.
+2. Otherwise, look for `gitpp.yaml` in the current directory.
+3. If not found, look for `gitpp.yml`.
+4. If neither exists, exit with an error.
 
-### フォーマット
+### Format
 
 ```yaml
 config:
-  <git-config-key>: <string>  # git config --local で設定される任意のキー
+  <git-config-key>: <string>  # Any key applied via git config --local
 comments:
-  default: <string>           # push 時のコミットメッセージ
-jobs: <number>                # 並列実行数の上限（省略時 20）
+  default: <string>           # Commit message used for push
+jobs: <number>                # Max concurrency (default: 20)
 repos:
-  - enabled: <bool>           # false なら対象外
-    remote: <string>          # git リモート URL
-    branch: <string>          # clone 時のブランチ
-    group: <string>           # clone 先サブディレクトリ名
+  - enabled: <bool>           # Excluded from all operations when false
+    remote: <string>          # Git remote URL
+    branch: <string>          # Branch passed to -b on clone
+    group: <string>           # Subdirectory name under the root
 ```
 
-### フィールド詳細
+### Field Reference
 
-| フィールド | 型 | 必須 | 説明 |
+| Field | Type | Required | Description |
 |---|---|---|---|
-| `config` | HashMap | no | `git config --local` に渡す任意の key-value（`user.name`, `pull.rebase` 等） |
-| `comments.default` | String | yes | push 時の固定コミットメッセージ |
-| `jobs` | usize | no | 並列実行数の上限。CLI `-j` で上書き可。デフォルト 20 |
-| `repos[].enabled` | bool | yes | false で対象から除外 |
-| `repos[].remote` | String | yes | SSH or HTTPS のリモート URL |
-| `repos[].branch` | String | yes | clone 時に `-b` で指定するブランチ |
-| `repos[].group` | String | yes | `{group}/{repo_name}` のディレクトリに clone |
+| `config` | HashMap | no | Arbitrary key-value pairs applied via `git config --local` (e.g., `user.name`, `pull.rebase`) |
+| `comments.default` | String | yes* | Fixed commit message used by push. *Required to enable push. |
+| `jobs` | usize | no | Max concurrent operations. Overridable via `-j`. Default: 20. |
+| `repos[].enabled` | bool | yes | When false, the repository is excluded from all operations. |
+| `repos[].remote` | String | yes | Remote URL (SSH or HTTPS). |
+| `repos[].branch` | String | yes | Branch passed to `-b` on clone. |
+| `repos[].group` | String | yes | Repository is cloned into `{group}/{repo_name}`. |
 
-リポジトリ名は `remote` URL の末尾パス要素から自動抽出される（`.git` は除去）。
+The repository name is derived automatically from the trailing path segment of the remote URL (`.git` suffix stripped).
 
 ## TUI
 
-ratatui + crossterm によるフルスクリーン TUI。
+A fullscreen TUI built with ratatui and crossterm.
 
-### レイアウト
+### Layout
 
-**一覧モード（デフォルト）:**
+**List mode (default):**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -133,7 +137,7 @@ ratatui + crossterm によるフルスクリーン TUI。
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**詳細モード（Enter で展開）:**
+**Detail mode (toggled with Enter):**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -150,55 +154,56 @@ ratatui + crossterm によるフルスクリーン TUI。
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### キー操作
+### Key Bindings
 
-| キー | 動作 |
+| Key | Action |
 |---|---|
-| j / k / ↑ / ↓ | リポ選択・スクロール |
-| g | 先頭へ |
-| G | 末尾へ |
-| Enter | 詳細ペイン表示/非表示 |
-| h / l / ← / → | 詳細ペイン内を縦スクロール（3行ずつ） |
-| Esc | 詳細ペインを閉じる（ペイン非表示時はブラウズモード終了） |
-| q | 強制終了 |
+| j / k / ↑ / ↓ | Move selection / scroll list |
+| g | Jump to first item |
+| G | Jump to last item |
+| Enter | Toggle detail pane |
+| h / l / ← / → | Scroll detail pane vertically (3 lines at a time) |
+| Esc | Close detail pane (or exit browse mode when pane is already closed) |
+| q | Force quit |
 
-### 完了後の動作
+### Behavior After Completion
 
-全リポジトリの処理が完了すると:
-1. **2秒間**キー操作を待つ
-2. 操作なし → 自動終了し、stdout にサマリーを出力
-3. 何かキーを押す → ブラウズモードに移行（j/k で結果を見回せる、q または Esc で終了）
+When all repositories have finished processing:
+1. Wait for a keypress for **2 seconds**.
+2. No input → exit automatically and print a summary to stdout.
+3. Any key pressed → enter browse mode (navigate results with j/k; quit with q or Esc).
 
-実行中でも `q` を押せばいつでも即時終了できる。
+Pressing `q` at any time during execution exits immediately.
 
-### ステータス遷移
+### Status Transitions
 
-| ステータス | アイコン | 色 | 意味 |
+| Status | Icon | Color | Meaning |
 |---|---|---|---|
-| Pending | ⏸ | DarkGray | セマフォ待ち含む待機中 |
-| Running | ⚙ | Yellow | 実行中 |
-| Success | ✓ | Green | 完了 |
-| Failed | ✗ | Red | 失敗 |
+| Pending | ⏸ | DarkGray | Waiting, including semaphore queue |
+| Running | ⚙ | Yellow | In progress |
+| Success | ✓ | Green | Completed successfully |
+| Failed | ✗ | Red | Encountered an error |
 
-### エラー判定
+### Error Detection
 
-git コマンドの exit code で判定。非ゼロなら Failed。
+Exit code of the git subprocess determines the result. Any non-zero exit code → Failed.
 
-push 時は add → commit → push を順に実行し、途中で失敗したら以降をスキップする。
-`git commit` が "nothing to commit" で非ゼロ終了した場合は正常扱いとし、push もスキップして Success を返す（変更がないのに push する無駄を避ける）。
-この判定のみ exit code + 出力文字列の複合判定を使う。
+For push, the steps run in sequence: add → commit → push. A failure at any step skips the remaining steps.
+If `git commit` exits with a non-zero code due to "nothing to commit", it is treated as a success
+and push is skipped — there is no point pushing when there are no changes.
+This is the only case where the decision is based on both the exit code and the output string.
 
-### TUI 終了後のサマリー出力
+### Summary Output After TUI Exit
 
-TUI 終了後、プレーンテキスト（ANSI エスケープコードなし）でサマリーを stdout に出力する。
-そのままクリップボードにコピーして AI エージェント等に貼り付けられる形式。
+After the TUI closes, a plain-text summary (no ANSI escape codes) is printed to stdout.
+The format is suitable for pasting directly into a chat with an AI agent.
 
-**全成功時:**
+**All succeeded:**
 ```
 gitpp pull: all 101 repositories succeeded.
 ```
 
-**失敗あり:**
+**With failures:**
 ```
 gitpp pull: 98/101 succeeded, 3 failed
 
@@ -210,34 +215,34 @@ gitpp pull: 98/101 succeeded, 3 failed
   fatal: refusing to merge unrelated histories
 ```
 
-各失敗リポについて、リポ名・フルパス・git 出力を表示する。
-push の場合は add → commit → push 全ステップの出力が結合される。
+For each failed repository, the name, full path, and git output are shown.
+For push failures, the combined output of all steps (add, commit, push) is included.
 
-## 並列実行
+## Parallel Execution
 
-- 1リポジトリ = 1スレッド（`std::thread`）
-- セマフォ（`Mutex<usize>` + `Condvar`）で同時実行数を制限
-- デフォルト並列度: `jobs` 設定値（未指定時 20）
-- CLI `-j N` で上書き可能
-- 共有データ: `Arc<Mutex<Vec<RepoProgress>>>`
-- TUI は 100ms ごとにポーリングして画面更新
+- One thread per repository (`std::thread`)
+- A semaphore (`Mutex<usize>` + `Condvar`) limits concurrent operations
+- Default concurrency: `jobs` setting (20 if not specified)
+- Override at runtime with `-j N`
+- Shared state: `Arc<Mutex<Vec<RepoProgress>>>`
+- TUI polls for updates every 100ms
 
-## OS 対応
+## OS Support
 
-| OS | 文字コード | 備考 |
+| OS | Encoding | Notes |
 |---|---|---|
-| Windows | Shift_JIS | git 出力のデコードに使用 |
+| Windows | Shift_JIS | Used for decoding git output |
 | Linux / macOS | UTF-8 | |
 
-## 技術スタック
+## Technology Stack
 
-| クレート | バージョン | 用途 |
+| Crate | Version | Purpose |
 |---|---|---|
-| ratatui | 0.28 | TUI フレームワーク |
-| crossterm | 0.28 | ターミナル制御 |
-| rustyline | 14.0 | インタラクティブモード（REPL） |
-| serde + serde_yaml | 1.0 / 0.9 | YAML 設定読み込み |
-| encoding_rs | 0.8 | OS 別文字コード変換 |
-| dirs | 5.0 | ホームディレクトリ取得 |
+| ratatui | 0.28 | TUI framework |
+| crossterm | 0.28 | Terminal control |
+| rustyline | 14.0 | Interactive mode (REPL) |
+| serde + serde_yaml | 1.0 / 0.9 | YAML config parsing |
+| encoding_rs | 0.8 | Per-OS character encoding conversion |
+| dirs | 5.0 | Home directory resolution |
 
-Rust edition 2021。
+Rust edition 2021.

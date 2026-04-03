@@ -1,94 +1,95 @@
-# gitpp 概要
+# gitpp Overview
 
-最終更新: 2026-04-02
+Last updated: 2026-04-03
 
-## gitpp とは
+## What is gitpp?
 
-**gitpp** = git + personal + parallel。
-複数の Git リポジトリを YAML 設定ファイルに基づいて並列で一括操作するツール。
-コマンドは clone / pull / push の3つだけ。
+**gitpp** = git + personal + parallel.
+A tool for managing multiple Git repositories in parallel, driven by a single YAML configuration file.
+It exposes exactly three commands: clone, pull, and push.
 
-元々は Bash スクリプト（`gitp.sh`）として運用していたものを Rust で再実装。
-TUI による視覚的な進捗表示とシングルバイナリ配布が主な改善点。
+Originally a Bash script (`gitp.sh`), rewritten in Rust.
+The main improvements are a visual progress display via TUI and distribution as a single binary.
 
-## 想定する使用場面
+## Intended Use Case
 
-100規模のリポジトリを複数の環境（自宅PC、職場、ノート等）で更新し続けている場合、
-新しい環境で作業を始める前に全リポジトリを pull しないとコンフリクトが頻発する。
-この「まず全部 pull」を YAML 1ファイル + `gitpp pull` で解決する。
+When you maintain repositories in the hundreds across multiple machines (home PC, work, laptop, etc.),
+starting work on a new machine without pulling everything first leads to constant conflicts.
+The "pull everything first" workflow is solved by one YAML file and a single `gitpp pull`.
 
-## 設計思想
+## Design Philosophy
 
-### シンプルであること
+### Do One Thing
 
-gitpp ができるのは clone / pull / push だけ。
-ブランチ管理、マージ、リベース、PR 作成などは範囲外。
-「何でもできる」ではなく「これだけやる」。
+gitpp does clone, pull, and push — nothing else.
+Branch management, merging, rebasing, and opening PRs are out of scope.
+Not "do anything", but "do exactly this".
 
-### デフォルトは YAML を置いた場所がリポジトリ群のルート
+### YAML location is the repository root by default
 
-デフォルトでは設定ファイルをカレントディレクトリから探す。`~/.config/` のような固定パスは使わない。
-複数の場所にそれぞれ YAML を置けば、独立したリポジトリ置き場を複数持てる。
+By default, gitpp looks for its config file in the current directory. No fixed paths like `~/.config/`.
+Placing separate YAML files in different locations lets you maintain independent repository trees.
 
-`--config` / `--root` オプションで設定ファイルとリポジトリルートを個別に指定することも可能。
-cron やスクリプトから実行する場合など、CWD に依存したくないケースに対応する。
+The `--config` and `--root` options allow explicit override of the config file path and the repository root.
+This is useful when running from cron or scripts where relying on CWD is undesirable.
 
-### コミットユーザーの共存
+### Multiple Commit Identities
 
-同じマシンに別々の顔がある。趣味の OSS 活動、仕事のプロジェクト、
-あるいは複数の趣味アカウント。システムレベル（`~/.gitconfig`）に user を定義すると、
-コミットユーザーの誤爆が起こる（SNS の複垢で投稿先を間違えるのと同じ）。
+One machine, multiple identities: personal open source work, job projects, or several hobby accounts.
+Defining a user at the system level (`~/.gitconfig`) leads to commits going out under the wrong name —
+the git equivalent of posting to the wrong social media account.
 
-gitpp はシステムレベルの git config を定義しない前提で、
-YAML の `config:` セクションに書いた `git config` 互換の key-value を
-リポジトリごとの `.git/config` に一括設定する。`user.name` / `user.email` だけでなく、
-`pull.rebase`, `core.autocrlf` など任意の git config キーを指定可能。
+gitpp assumes no system-level git config is set. Instead, key-value pairs written in the `config:` section
+of the YAML are applied to each repository's `.git/config` via `git config --local`.
+Any git config key is supported — not just `user.name` / `user.email`, but also `pull.rebase`,
+`core.autocrlf`, and so on.
 
-- システムに user がない → config を忘れたリポではコミットがエラーになる（フェイルセーフ）
-- YAML ごとに config を変えれば、置き場所単位で自然に設定が分かれる
-- どの顔も対等。「メイン」と「サブ」ではなく、それぞれの場所にそれぞれの gitpp.yaml
+- No system user defined → forgetting to configure a repo causes commit errors (a fail-safe)
+- Different YAML files can carry different configs, so identity naturally follows location
+- No "main" and "sub" identities — each location gets its own `gitpp.yaml` on equal footing
 
-config は独立したコマンドではなく、clone / pull / push の全操作で暗黙的に適用される。
+Config is not a standalone command; it is applied implicitly on every clone, pull, and push.
 
-### group によるリポジトリの分類
+### Repository Classification via `group`
 
-YAML の `group` フィールドは clone 先のサブディレクトリ名であると同時に、
-リポジトリの性質を暗黙的に伝える。
+The `group` field in the YAML is both the subdirectory name for cloning and an implicit
+description of a repository's character.
 
-| group 例 | 意味 |
+| group example | Meaning |
 |---|---|
-| `private` | 非公開リポ。外部に出さない |
-| `2025`, `2026` | 公開リポ。作成年で分類 |
-| `gitlab` | GitHub ではなく GitLab 上のリポ |
+| `private` | Private repos; not shared externally |
+| `2025`, `2026` | Public repos, organized by year of creation |
+| `gitlab` | Repos hosted on GitLab rather than GitHub |
 
-ディレクトリ構造を見るだけで、人間にも AI エージェントにもリポの性質が伝わる。
+The directory structure alone communicates the nature of each repo to both humans and AI agents.
 
-### push の割り切りとオプトイン
+### Push is Opt-In by Design
 
-push は破壊的な操作（`git add -A` で全ファイル追加 + 固定メッセージでコミット）のため、
-**`comments.default` を明示的に設定しない限り無効**。clone/pull だけ使うなら `comments` セクション自体が不要。
+Push is a destructive operation (`git add -A` on everything, followed by a fixed commit message),
+so it is **disabled unless `comments.default` is explicitly set**.
+If you only need clone and pull, the `comments` section can be omitted entirely.
 
-有効にした場合の設計:
-`git add -A` で全ファイルを無条件追加する。個別に指定するタイミングがないため。
-`.gitignore` で事前に制御する前提。事故時はエージェントに歴史改変させる割り切り。
+When enabled:
+`git add -A` stages all files unconditionally — because there is no opportunity to cherry-pick.
+Use `.gitignore` to exclude files proactively. Accidents can be fixed by having an agent rewrite history.
 
-コミットメッセージは YAML の `comments.default` 固定（例: `"sync."`）。
-重要なリポは別途丁寧にコミットし、gitpp の push は private リポの一括同期用。
+The commit message is the fixed string from `comments.default` (e.g., `"sync."`).
+For repos that matter, commit carefully by hand. gitpp push is for bulk-syncing private repos.
 
-### 並列度制御
+### Concurrency Control
 
-101リポジトリを一斉に git pull すると、ネットワーク帯域やファイルシステムが詰まる。
-`jobs` 設定（デフォルト 20）で同時実行数を制限。
-CLI の `-j N` / `--jobs N` で上書きも可能（make -j, cargo build -j と同じ慣習）。
+Pulling 101 repos simultaneously saturates network bandwidth and the filesystem.
+The `jobs` setting (default: 20) caps concurrent operations.
+The CLI `-j N` / `--jobs N` flag overrides it at runtime — the same convention as `make -j` and `cargo build -j`.
 
-## 競合ツール
+## Competing Tools
 
-| ツール | 言語 | スター | 特徴 |
+| Tool | Language | Stars | Highlights |
 |---|---|---|---|
-| gita | Python | ~1.8k | グループ管理、delegate コマンド |
-| mani | Go | ~640 | YAML + タスクランナー + TUI |
-| myrepos (mr) | Perl | 老舗 | 複数 VCS 対応、依存なし |
-| gr | Node.js | - | タグベース自動発見 |
-| git-xargs | Go | - | スクリプト一括実行、PR 自動作成 |
+| gita | Python | ~1.8k | Group management, delegate commands |
+| mani | Go | ~640 | YAML + task runner + TUI |
+| myrepos (mr) | Perl | Veteran | Multi-VCS support, no dependencies |
+| gr | Node.js | - | Tag-based auto-discovery |
+| git-xargs | Go | - | Bulk script execution, auto PR creation |
 
-gitpp の差別化: **Rust + ratatui TUI + 単機能（clone/pull/push のみ）+ 並列度制御** の組み合わせは競合なし。
+gitpp's differentiator: **Rust + ratatui TUI + single-purpose (clone/pull/push only) + concurrency control** — no competing tool combines all four.
