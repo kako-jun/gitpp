@@ -16,6 +16,7 @@ struct GlobalOptions {
     jobs: Option<usize>,
     config_path: Option<PathBuf>,
     root_path: Option<PathBuf>,
+    quiet: bool,
     rest: Vec<String>,
 }
 
@@ -80,6 +81,7 @@ fn main() {
     };
 
     let jobs_override = global_opts.jobs;
+    let quiet = global_opts.quiet;
 
     if global_opts.rest.is_empty() {
         loop {
@@ -88,7 +90,9 @@ fn main() {
                     if cmd_args.is_empty() {
                         break;
                     }
-                    if let Err(e) = execute_command(&setting, &cmd_args, &base_dir, jobs_override) {
+                    if let Err(e) =
+                        execute_command(&setting, &cmd_args, &base_dir, jobs_override, quiet)
+                    {
                         eprintln!("Error: {e}");
                     }
                 }
@@ -98,7 +102,9 @@ fn main() {
                 }
             }
         }
-    } else if let Err(e) = execute_command(&setting, &global_opts.rest, &base_dir, jobs_override) {
+    } else if let Err(e) =
+        execute_command(&setting, &global_opts.rest, &base_dir, jobs_override, quiet)
+    {
         eprintln!("Error: {e}");
         std::process::exit(1);
     }
@@ -108,6 +114,7 @@ fn parse_global_options(args: &[String]) -> GlobalOptions {
     let mut jobs: Option<usize> = None;
     let mut config_path: Option<PathBuf> = None;
     let mut root_path: Option<PathBuf> = None;
+    let mut quiet = false;
     let mut rest = Vec::new();
     let mut skip_next = false;
 
@@ -117,7 +124,9 @@ fn parse_global_options(args: &[String]) -> GlobalOptions {
             continue;
         }
 
-        if (arg == "-j" || arg == "--jobs") && i + 1 < args.len() {
+        if arg == "-q" || arg == "--quiet" {
+            quiet = true;
+        } else if (arg == "-j" || arg == "--jobs") && i + 1 < args.len() {
             if let Ok(n) = args[i + 1].parse::<usize>() {
                 jobs = Some(n.max(1));
             }
@@ -153,6 +162,7 @@ fn parse_global_options(args: &[String]) -> GlobalOptions {
         jobs,
         config_path,
         root_path,
+        quiet,
         rest,
     }
 }
@@ -190,6 +200,7 @@ fn execute_command(
     args: &[String],
     base_dir: &Path,
     jobs_override: Option<usize>,
+    quiet: bool,
 ) -> Result<(), String> {
     if args.is_empty() {
         return Ok(());
@@ -257,7 +268,11 @@ fn execute_command(
         }
     }
 
-    if let Err(e) = tui_app.run() {
+    if quiet {
+        if let Err(e) = tui_app.run_quiet() {
+            return Err(format!("Error: {e:?}"));
+        }
+    } else if let Err(e) = tui_app.run() {
         return Err(format!("TUI error: {e:?}"));
     }
 
@@ -282,7 +297,10 @@ fn show_help() {
         "  \x1b[1;33m-r PATH\x1b[0m, \x1b[1;33m--root PATH\x1b[0m    Repository root directory (default: current directory)"
     );
     println!(
-        "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m           Max parallel jobs (default: from gitpp.yaml, or 20)\n"
+        "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m           Max parallel jobs (default: from gitpp.yaml, or 20)"
+    );
+    println!(
+        "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout\n"
     );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone");

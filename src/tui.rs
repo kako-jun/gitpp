@@ -71,6 +71,47 @@ impl TuiApp {
         Arc::clone(&self.repos)
     }
 
+    pub fn run_quiet(&mut self) -> Result<(), io::Error> {
+        use std::collections::HashSet;
+
+        let mut reported: HashSet<String> = HashSet::new();
+
+        loop {
+            {
+                let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+
+                for repo in repos.iter() {
+                    if reported.contains(&repo.name) {
+                        continue;
+                    }
+                    match repo.status {
+                        RepoStatus::Success => {
+                            eprintln!("[{}] {}... done", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
+                        RepoStatus::Failed => {
+                            eprintln!("[{}] {}... FAILED", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+
+                let all_done = repos
+                    .iter()
+                    .all(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed);
+                if all_done {
+                    break;
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(200));
+        }
+
+        self.print_summary();
+        Ok(())
+    }
+
     pub fn run(&mut self) -> Result<(), io::Error> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
