@@ -30,7 +30,7 @@
 | pull | `git pull` | コンフリクト時は自動解決しない（Failed 扱い） |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | コミットメッセージは `comments.default` 固定 |
 
-全操作の前後で YAML に書かれた user.name / user.email が各リポの `.git/config` に自動適用される。
+全操作の前後で YAML の `config:` に書かれた git config 設定が各リポの `.git/config` に自動適用される。
 
 ### clone の重複検出
 
@@ -39,7 +39,7 @@ clone 先ディレクトリに `.git` が既に存在する場合、`git remote 
 | 状況 | 結果 |
 |---|---|
 | `.git` なし | 通常通り clone を実行 |
-| `.git` あり + remote 一致 | "Already cloned" 表示（Success）。user config だけ適用 |
+| `.git` あり + remote 一致 | "Already cloned" 表示（Success）。config だけ適用 |
 | `.git` あり + remote 不一致 | "Remote mismatch" 表示（Failed）。期待値と実際の remote を出力 |
 
 ## 動作モード
