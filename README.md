@@ -63,6 +63,12 @@ gitpp pull              # Pull all enabled repos
 gitpp push -j 10        # Push with max 10 parallel jobs
 gitpp clone             # Clone (skips already-cloned repos)
 
+# Use a config file from another location
+gitpp pull --config ~/shared/gitpp.yaml
+
+# Specify both config and repo root
+gitpp clone -c /mnt/ssd/gitpp.yaml -r /mnt/ssd/repos
+
 # Interactive mode
 gitpp                   # Enter REPL with tab completion
 gitpp> pull

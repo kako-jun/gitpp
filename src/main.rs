@@ -6,10 +6,18 @@ mod tui;
 use git_controller::GitController;
 use std::env;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use tui::{append_repo_output, update_repo_status, RepoStatus, TuiApp};
+
+#[derive(Debug)]
+struct GlobalOptions {
+    jobs: Option<usize>,
+    config_path: Option<PathBuf>,
+    root_path: Option<PathBuf>,
+    rest: Vec<String>,
+}
 
 struct Semaphore {
     state: Mutex<usize>,
@@ -49,7 +57,10 @@ impl Drop for SemaphoreGuard {
 }
 
 fn main() {
-    let setting = match setting_util::load() {
+    let args: Vec<String> = env::args().skip(1).collect();
+    let global_opts = parse_global_options(&args);
+
+    let setting = match setting_util::load(global_opts.config_path.as_deref()) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Error: {e}");
@@ -57,16 +68,27 @@ fn main() {
         }
     };
 
-    let args: Vec<String> = env::args().skip(1).collect();
+    let base_dir = match &global_opts.root_path {
+        Some(p) => p.clone(),
+        None => match env::current_dir() {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Error: Cannot get current directory: {e}");
+                std::process::exit(1);
+            }
+        },
+    };
 
-    if args.is_empty() {
+    let jobs_override = global_opts.jobs;
+
+    if global_opts.rest.is_empty() {
         loop {
             match interactive::run_interactive_mode() {
                 Ok(cmd_args) => {
                     if cmd_args.is_empty() {
                         break;
                     }
-                    if let Err(e) = execute_command(&setting, &cmd_args) {
+                    if let Err(e) = execute_command(&setting, &cmd_args, &base_dir, jobs_override) {
                         eprintln!("Error: {e}");
                     }
                 }
@@ -76,9 +98,58 @@ fn main() {
                 }
             }
         }
-    } else if let Err(e) = execute_command(&setting, &args) {
+    } else if let Err(e) = execute_command(&setting, &global_opts.rest, &base_dir, jobs_override) {
         eprintln!("Error: {e}");
         std::process::exit(1);
+    }
+}
+
+fn parse_global_options(args: &[String]) -> GlobalOptions {
+    let mut jobs: Option<usize> = None;
+    let mut config_path: Option<PathBuf> = None;
+    let mut root_path: Option<PathBuf> = None;
+    let mut rest = Vec::new();
+    let mut skip_next = false;
+
+    for (i, arg) in args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+
+        if (arg == "-j" || arg == "--jobs") && i + 1 < args.len() {
+            if let Ok(n) = args[i + 1].parse::<usize>() {
+                jobs = Some(n.max(1));
+            }
+            skip_next = true;
+        } else if arg.starts_with("-j") && arg.len() > 2 {
+            if let Ok(n) = arg[2..].parse::<usize>() {
+                jobs = Some(n.max(1));
+            }
+        } else if arg == "-c" || arg == "--config" {
+            if i + 1 >= args.len() {
+                eprintln!("Error: {arg} requires a value");
+                std::process::exit(1);
+            }
+            config_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
+            skip_next = true;
+        } else if arg == "-r" || arg == "--root" {
+            if i + 1 >= args.len() {
+                eprintln!("Error: {arg} requires a value");
+                std::process::exit(1);
+            }
+            root_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
+            skip_next = true;
+        } else {
+            rest.push(arg.clone());
+        }
+    }
+
+    GlobalOptions {
+        jobs,
+        config_path,
+        root_path,
+        rest,
     }
 }
 
@@ -110,12 +181,18 @@ fn parse_jobs(args: &[String], default: usize) -> (usize, Vec<String>) {
     (jobs, filtered)
 }
 
-fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Result<(), String> {
+fn execute_command(
+    setting: &setting_util::GitppSetting,
+    args: &[String],
+    base_dir: &Path,
+    jobs_override: Option<usize>,
+) -> Result<(), String> {
     if args.is_empty() {
         return Ok(());
     }
 
-    let (jobs, filtered_args) = parse_jobs(args, setting.jobs);
+    let (parsed_jobs, filtered_args) = parse_jobs(args, setting.jobs);
+    let jobs = jobs_override.unwrap_or(parsed_jobs);
 
     if filtered_args.is_empty() {
         return Ok(());
@@ -129,8 +206,6 @@ fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Res
         println!("No enabled repositories found in configuration.");
         return Ok(());
     }
-
-    let base_dir = env::current_dir().map_err(|e| format!("Cannot get current directory: {e}"))?;
 
     let repo_names: Vec<String> = enabled_repos
         .iter()
@@ -161,13 +236,13 @@ fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Res
 
     match command.as_str() {
         "clone" | "clo" | "cl" => {
-            spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
+            spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "pull" | "pul" | "pu" => {
-            spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
+            spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "push" | "pus" | "ps" => {
-            spawn_push_workers(setting, &enabled_repos, repos_handle, &semaphore, &base_dir);
+            spawn_push_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "help" | "?" => {
             show_help();
@@ -188,16 +263,22 @@ fn execute_command(setting: &setting_util::GitppSetting, args: &[String]) -> Res
 fn show_help() {
     println!("\n\x1b[1;36mgitpp\x1b[0m - Git Personal Parallel Manager\n");
     println!("\x1b[1;36mUsage:\x1b[0m");
-    println!("  gitpp                      Start interactive mode");
-    println!("  gitpp <command> [options]   Execute command and exit\n");
+    println!("  gitpp [global options] <command> [options]");
+    println!("  gitpp                      Start interactive mode\n");
     println!("\x1b[1;36mCommands:\x1b[0m");
     println!("  \x1b[1;33mclone\x1b[0m                Clone all enabled repositories");
     println!("  \x1b[1;33mpull\x1b[0m                 Pull all enabled repositories");
     println!("  \x1b[1;33mpush\x1b[0m                 Push all enabled repositories");
     println!("  \x1b[1;33mhelp\x1b[0m                 Show this help message\n");
-    println!("\x1b[1;36mOptions:\x1b[0m");
+    println!("\x1b[1;36mGlobal Options:\x1b[0m");
     println!(
-        "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m      Max parallel jobs (default: from gitpp.yaml, or 20)\n"
+        "  \x1b[1;33m-c PATH\x1b[0m, \x1b[1;33m--config PATH\x1b[0m  Config file path (default: ./gitpp.yaml or ./gitpp.yml)"
+    );
+    println!(
+        "  \x1b[1;33m-r PATH\x1b[0m, \x1b[1;33m--root PATH\x1b[0m    Repository root directory (default: current directory)"
+    );
+    println!(
+        "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m           Max parallel jobs (default: from gitpp.yaml, or 20)\n"
     );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone");
