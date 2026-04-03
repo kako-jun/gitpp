@@ -89,9 +89,7 @@ impl TuiApp {
                 let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
                 let running: Vec<_> = repos
                     .iter()
-                    .filter(|r| {
-                        r.status == RepoStatus::Pending || r.status == RepoStatus::Running
-                    })
+                    .filter(|r| r.status == RepoStatus::Pending || r.status == RepoStatus::Running)
                     .collect();
                 if !running.is_empty() {
                     eprintln!("{} repositories still in progress:", running.len());
