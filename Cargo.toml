@@ -1,6 +1,6 @@
 [package]
 name = "gitpp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Git Personal Parallel Manager — manage 100+ Git repos with one command"
 license = "MIT"
