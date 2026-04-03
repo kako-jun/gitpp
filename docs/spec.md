@@ -7,7 +7,7 @@
 | コマンド | ショートカット | 動作 |
 |---|---|---|
 | `clone` | `clo`, `cl` | 全 enabled リポジトリを並列 clone |
-| `pull` | `pul`, `pu` | 全 enabled リポジトリを並列 pull |
+| `pull` | `pul`, `pl` | 全 enabled リポジトリを並列 pull |
 | `push` | `pus`, `ps` | 全 enabled リポジトリを並列 add → commit → push |
 | `help` | `?` | コマンド一覧を表示（TUI なし） |
 
