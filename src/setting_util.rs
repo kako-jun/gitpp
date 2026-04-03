@@ -9,6 +9,12 @@ fn default_jobs() -> usize {
     20
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct User {
+    pub name: String,
+    pub email: String,
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Repos {
     pub enabled: bool,
@@ -19,8 +25,7 @@ pub struct Repos {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GitppSetting {
-    #[serde(default)]
-    pub config: HashMap<String, String>,
+    pub user: User,
     pub comments: HashMap<String, String>,
     #[serde(default = "default_jobs")]
     pub jobs: usize,

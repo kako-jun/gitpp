@@ -328,7 +328,8 @@ fn spawn_clone_workers(
 ) {
     for repo in repos {
         let repo_data = (*repo).clone();
-        let config = setting.config.clone();
+        let user_name = setting.user.name.clone();
+        let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
         let sem = Arc::clone(semaphore);
@@ -377,7 +378,7 @@ fn spawn_clone_workers(
                         "Already cloned",
                         100,
                     );
-                    git.git_config(&repo_dir, &config);
+                    git.git_config(&repo_dir, &user_name, &user_email);
                     return;
                 }
                 // Directory exists but remote doesn't match
@@ -413,7 +414,7 @@ fn spawn_clone_workers(
             );
 
             if repo_dir.exists() {
-                git.git_config(&repo_dir, &config);
+                git.git_config(&repo_dir, &user_name, &user_email);
             }
 
             if result.success {
@@ -434,7 +435,8 @@ fn spawn_pull_workers(
 ) {
     for repo in repos {
         let repo_data = (*repo).clone();
-        let config = setting.config.clone();
+        let user_name = setting.user.name.clone();
+        let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
         let sem = Arc::clone(semaphore);
@@ -472,7 +474,7 @@ fn spawn_pull_workers(
                 "Configuring...",
                 30,
             );
-            git.git_config(&repo_dir, &config);
+            git.git_config(&repo_dir, &user_name, &user_email);
 
             update_repo_status(
                 &repos_handle,
@@ -509,7 +511,8 @@ fn spawn_push_workers(
 
     for repo in repos {
         let repo_data = (*repo).clone();
-        let config = setting.config.clone();
+        let user_name = setting.user.name.clone();
+        let user_email = setting.user.email.clone();
         let repos_handle = Arc::clone(&repos_handle);
         let repo_name = extract_repo_name(&repo.remote);
         let commit_msg = commit_message.clone();
@@ -548,7 +551,7 @@ fn spawn_push_workers(
                 "Configuring...",
                 20,
             );
-            git.git_config(&repo_dir, &config);
+            git.git_config(&repo_dir, &user_name, &user_email);
 
             update_repo_status(
                 &repos_handle,

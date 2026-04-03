@@ -1,6 +1,6 @@
-config:
-  user.name: kako-jun
-  user.email: 3541096+kako-jun@users.noreply.github.com
+user:
+  name: kako-jun
+  email: 3541096+kako-jun@users.noreply.github.com
 comments:
   default: update.
 jobs: 20

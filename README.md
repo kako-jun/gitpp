@@ -33,10 +33,9 @@ cargo install --path .
 Create `gitpp.yaml` in the root of your repos directory:
 
 ```yaml
-config:
-  user.name: your-name
-  user.email: your-email@example.com
-  pull.rebase: "true"
+user:
+  name: your-name
+  email: your-email@example.com
 comments:
   default: update.
 jobs: 20
@@ -51,7 +50,7 @@ repos:
     group: "projects"
 ```
 
-- **`config`** — `git config --local` key-value pairs applied to every repo automatically. Any valid git config key works
+- **`user`** — Applied to each repo's `.git/config` automatically (no global gitconfig needed)
 - **`jobs`** — Max parallel operations (default: 20)
 - **`group`** — Subdirectory for clone (e.g., `projects/repo-a`)
 - **`enabled`** — Set `false` to skip a repo

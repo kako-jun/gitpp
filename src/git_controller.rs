@@ -71,10 +71,9 @@ impl GitController {
         result.output.trim().to_string()
     }
 
-    pub fn git_config(&self, dir: &Path, config: &std::collections::HashMap<String, String>) {
-        for (key, value) in config {
-            self.exec_git(dir, &["config", "--local", key, value]);
-        }
+    pub fn git_config(&self, dir: &Path, name: &str, email: &str) {
+        self.exec_git(dir, &["config", "user.name", name]);
+        self.exec_git(dir, &["config", "user.email", email]);
     }
 
     fn exec_git(&self, dir: &Path, args: &[&str]) -> GitResult {
