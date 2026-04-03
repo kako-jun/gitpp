@@ -131,14 +131,18 @@ fn parse_global_options(args: &[String]) -> GlobalOptions {
                 eprintln!("Error: {arg} requires a value");
                 std::process::exit(1);
             }
-            config_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
+            config_path = Some(
+                fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])),
+            );
             skip_next = true;
         } else if arg == "-r" || arg == "--root" {
             if i + 1 >= args.len() {
                 eprintln!("Error: {arg} requires a value");
                 std::process::exit(1);
             }
-            root_path = Some(fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])));
+            root_path = Some(
+                fs::canonicalize(&args[i + 1]).unwrap_or_else(|_| PathBuf::from(&args[i + 1])),
+            );
             skip_next = true;
         } else {
             rest.push(arg.clone());
