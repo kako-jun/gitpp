@@ -13,6 +13,7 @@ use ratatui::{
 };
 use std::collections::HashSet;
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -72,7 +73,7 @@ impl TuiApp {
         Arc::clone(&self.repos)
     }
 
-    pub fn run_quiet(&mut self) -> Result<(), io::Error> {
+    pub fn run_quiet(&mut self, interrupted: Arc<AtomicBool>) -> Result<(), io::Error> {
         let mut reported: HashSet<String> = HashSet::new();
 
         {
@@ -83,6 +84,24 @@ impl TuiApp {
         }
 
         loop {
+            if interrupted.load(Ordering::Relaxed) {
+                eprintln!("\nInterrupted. Reporting current status...");
+                let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+                let running: Vec<_> = repos
+                    .iter()
+                    .filter(|r| {
+                        r.status == RepoStatus::Pending || r.status == RepoStatus::Running
+                    })
+                    .collect();
+                if !running.is_empty() {
+                    eprintln!("{} repositories still in progress:", running.len());
+                    for repo in &running {
+                        eprintln!("  {} ({:?})", repo.name, repo.status);
+                    }
+                }
+                break;
+            }
+
             {
                 let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
 

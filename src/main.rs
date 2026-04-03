@@ -7,6 +7,7 @@ use git_controller::GitController;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use tui::{append_repo_output, update_repo_status, RepoStatus, TuiApp};
@@ -84,6 +85,10 @@ fn main() {
     let quiet = global_opts.quiet;
 
     if global_opts.rest.is_empty() {
+        if quiet {
+            eprintln!("Error: --quiet cannot be used with interactive mode. Specify a command.");
+            std::process::exit(1);
+        }
         loop {
             match interactive::run_interactive_mode() {
                 Ok(cmd_args) => {
@@ -269,7 +274,13 @@ fn execute_command(
     }
 
     if quiet {
-        if let Err(e) = tui_app.run_quiet() {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let interrupted_clone = Arc::clone(&interrupted);
+        ctrlc::set_handler(move || {
+            interrupted_clone.store(true, Ordering::Relaxed);
+        })
+        .ok();
+        if let Err(e) = tui_app.run_quiet(interrupted) {
             return Err(format!("Quiet mode error: {e:?}"));
         }
     } else if let Err(e) = tui_app.run() {
