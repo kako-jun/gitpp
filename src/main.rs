@@ -245,7 +245,7 @@ fn execute_command(
 
     let canonical_cmd = match command.as_str() {
         "clone" | "clo" | "cl" => "clone",
-        "pull" | "pul" | "pu" => "pull",
+        "pull" | "pul" | "pl" => "pull",
         "push" | "pus" | "ps" => "push",
         other => other,
     };
@@ -258,7 +258,7 @@ fn execute_command(
         "clone" | "clo" | "cl" => {
             spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
-        "pull" | "pul" | "pu" => {
+        "pull" | "pul" | "pl" => {
             spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "push" | "pus" | "ps" => {
@@ -315,7 +315,7 @@ fn show_help() {
     );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone");
-    println!("  pul, pu  → pull");
+    println!("  pul, pl  → pull");
     println!("  pus, ps  → push\n");
 }
 
