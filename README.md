@@ -69,6 +69,9 @@ gitpp pull --config ~/shared/gitpp.yaml
 # Specify both config and repo root
 gitpp clone -c /mnt/ssd/gitpp.yaml -r /mnt/ssd/repos
 
+# Quiet mode (no TUI, for scripts/CI/hooks)
+gitpp pull -q              # Summary to stdout, progress to stderr
+
 # Interactive mode
 gitpp                   # Enter REPL with tab completion
 gitpp> pull

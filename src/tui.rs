@@ -11,6 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
+use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -69,6 +70,52 @@ impl TuiApp {
 
     pub fn get_repos_handle(&self) -> Arc<Mutex<Vec<RepoProgress>>> {
         Arc::clone(&self.repos)
+    }
+
+    pub fn run_quiet(&mut self) -> Result<(), io::Error> {
+        let mut reported: HashSet<String> = HashSet::new();
+
+        {
+            let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+            if repos.is_empty() {
+                return Ok(());
+            }
+        }
+
+        loop {
+            {
+                let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+
+                for repo in repos.iter() {
+                    if reported.contains(&repo.name) {
+                        continue;
+                    }
+                    match repo.status {
+                        RepoStatus::Success => {
+                            eprintln!("[{}] {}... done", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
+                        RepoStatus::Failed => {
+                            eprintln!("[{}] {}... FAILED", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+
+                let all_done = repos
+                    .iter()
+                    .all(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed);
+                if all_done {
+                    break;
+                }
+            }
+
+            std::thread::sleep(Duration::from_millis(200));
+        }
+
+        self.print_summary();
+        Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), io::Error> {
