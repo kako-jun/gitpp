@@ -11,6 +11,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
+use std::collections::HashSet;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -72,9 +73,14 @@ impl TuiApp {
     }
 
     pub fn run_quiet(&mut self) -> Result<(), io::Error> {
-        use std::collections::HashSet;
-
         let mut reported: HashSet<String> = HashSet::new();
+
+        {
+            let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+            if repos.is_empty() {
+                return Ok(());
+            }
+        }
 
         loop {
             {

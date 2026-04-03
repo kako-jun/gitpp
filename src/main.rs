@@ -270,7 +270,7 @@ fn execute_command(
 
     if quiet {
         if let Err(e) = tui_app.run_quiet() {
-            return Err(format!("Error: {e:?}"));
+            return Err(format!("Quiet mode error: {e:?}"));
         }
     } else if let Err(e) = tui_app.run() {
         return Err(format!("TUI error: {e:?}"));
