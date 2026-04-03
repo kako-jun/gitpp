@@ -79,9 +79,9 @@ A full-screen TUI shows real-time progress for every repository:
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Press Enter on any repo to open the detail pane and see live git output:
+The detail pane is shown by default. Press Enter to toggle it off/on:
 
-**Detail mode:**
+**Detail mode (default):**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -209,7 +209,7 @@ gitpp> exit
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate repos |
 | `g` / `G` | Jump to top / bottom |
-| `Enter` | Toggle detail pane |
+| `Enter` | Toggle detail pane (shown by default) |
 | `h` / `l` / `←` / `→` | Scroll detail pane (3 lines at a time) |
 | `Esc` | Close detail pane (or exit browse mode) |
 | `q` | Quit immediately |

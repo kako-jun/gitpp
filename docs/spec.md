@@ -137,7 +137,7 @@ A fullscreen TUI built with ratatui and crossterm.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Detail mode (toggled with Enter):**
+**Detail mode (shown by default, toggled with Enter):**
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -161,7 +161,7 @@ A fullscreen TUI built with ratatui and crossterm.
 | j / k / ↑ / ↓ | Move selection / scroll list |
 | g | Jump to first item |
 | G | Jump to last item |
-| Enter | Toggle detail pane |
+| Enter | Toggle detail pane (shown by default) |
 | h / l / ← / → | Scroll detail pane vertically (3 lines at a time) |
 | Esc | Close detail pane (or exit browse mode when pane is already closed) |
 | q | Force quit |
