@@ -30,7 +30,7 @@
 | pull | `git pull` | コンフリクト時は自動解決しない（Failed 扱い） |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | コミットメッセージは `comments.default` 固定 |
 
-全操作の前後で YAML の `config:` に書かれた git config 設定が各リポの `.git/config` に自動適用される。
+全操作の前後で YAML の `config:` に書かれた git config 設定が各リポの `.git/config` に `git config --local` で自動適用される。YAML からキーを削除しても、既存リポの `.git/config` からは自動削除されない（上書きのみ）。
 
 ### clone の重複検出
 
@@ -69,25 +69,23 @@ clone 先ディレクトリに `.git` が既に存在する場合、`git remote 
 ### フォーマット
 
 ```yaml
-user:
-  name: <string>          # git config user.name
-  email: <string>         # git config user.email
+config:
+  <git-config-key>: <string>  # git config --local で設定される任意のキー
 comments:
-  default: <string>       # push 時のコミットメッセージ
-jobs: <number>            # 並列実行数の上限（省略時 20）
+  default: <string>           # push 時のコミットメッセージ
+jobs: <number>                # 並列実行数の上限（省略時 20）
 repos:
-  - enabled: <bool>       # false なら対象外
-    remote: <string>      # git リモート URL
-    branch: <string>      # clone 時のブランチ
-    group: <string>       # clone 先サブディレクトリ名
+  - enabled: <bool>           # false なら対象外
+    remote: <string>          # git リモート URL
+    branch: <string>          # clone 時のブランチ
+    group: <string>           # clone 先サブディレクトリ名
 ```
 
 ### フィールド詳細
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `user.name` | String | yes | 全リポジトリに設定する git user.name |
-| `user.email` | String | yes | 全リポジトリに設定する git user.email |
+| `config` | HashMap | no | `git config --local` に渡す任意の key-value（`user.name`, `pull.rebase` 等） |
 | `comments.default` | String | yes | push 時の固定コミットメッセージ |
 | `jobs` | usize | no | 並列実行数の上限。CLI `-j` で上書き可。デフォルト 20 |
 | `repos[].enabled` | bool | yes | false で対象から除外 |
