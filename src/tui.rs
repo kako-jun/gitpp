@@ -64,7 +64,7 @@ impl TuiApp {
             command: command.to_string(),
             selected: 0,
             scroll_offset: 0,
-            show_detail: false,
+            show_detail: true,
             detail_scroll: 0,
         }
     }
