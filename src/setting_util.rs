@@ -21,6 +21,7 @@ pub struct Repos {
 pub struct GitppSetting {
     #[serde(default)]
     pub config: HashMap<String, String>,
+    #[serde(default)]
     pub comments: HashMap<String, String>,
     #[serde(default = "default_jobs")]
     pub jobs: usize,

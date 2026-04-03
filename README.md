@@ -52,6 +52,7 @@ repos:
 ```
 
 - **`config`** — `git config --local` key-value pairs applied to every repo automatically. Any valid git config key works. Note: removing a key from the YAML does not unset it from existing repos' `.git/config`
+- **`comments.default`** — Commit message for push. **Push is disabled unless this is set to a non-empty string.** Omit `comments` entirely if you only use clone/pull
 - **`jobs`** — Max parallel operations (default: 20)
 - **`group`** — Subdirectory for clone (e.g., `projects/repo-a`)
 - **`enabled`** — Set `false` to skip a repo

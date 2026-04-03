@@ -30,6 +30,19 @@
 | pull | `git pull` | コンフリクト時は自動解決しない（Failed 扱い） |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | コミットメッセージは `comments.default` 固定 |
 
+### push のオプトイン設計
+
+push は全リポに `git add -A` + 固定メッセージでコミットする破壊的な操作のため、明示的なオプトインが必要。
+`comments.default` が未設定または空文字列の場合、push コマンドは `git add -A` を実行せずにエラーで停止する。
+push を有効にするには、gitpp.yaml に `comments.default` を設定する:
+
+```yaml
+comments:
+  default: update.
+```
+
+`comments` セクション自体を省略した場合も push は無効になる。clone と pull は影響を受けない。
+
 全操作の前後で YAML の `config:` に書かれた git config 設定が各リポの `.git/config` に `git config --local` で自動適用される。YAML からキーを削除しても、既存リポの `.git/config` からは自動削除されない（上書きのみ）。
 
 ### clone の重複検出
