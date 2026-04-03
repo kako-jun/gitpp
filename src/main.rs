@@ -262,7 +262,11 @@ fn execute_command(
             spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "push" | "pus" | "ps" => {
-            let msg = setting.comments.get("default").map(|s| s.as_str()).unwrap_or("");
+            let msg = setting
+                .comments
+                .get("default")
+                .map(|s| s.as_str())
+                .unwrap_or("");
             if msg.is_empty() {
                 return Err("Push is disabled: comments.default is empty or not set in gitpp.yaml. Set a commit message to enable push.".to_string());
             }
@@ -504,8 +508,11 @@ fn spawn_push_workers(
     semaphore: &Arc<Semaphore>,
     base_dir: &Path,
 ) {
-    // comments.default の存在と非空は execute_command で検証済み
-    let commit_message = setting.comments.get("default").unwrap().clone();
+    let commit_message = setting
+        .comments
+        .get("default")
+        .expect("comments.default verified in execute_command")
+        .clone();
 
     for repo in repos {
         let repo_data = (*repo).clone();
