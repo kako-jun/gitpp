@@ -69,25 +69,23 @@ clone 先ディレクトリに `.git` が既に存在する場合、`git remote 
 ### フォーマット
 
 ```yaml
-user:
-  name: <string>          # git config user.name
-  email: <string>         # git config user.email
+config:
+  <git-config-key>: <string>  # git config --local で設定される任意のキー
 comments:
-  default: <string>       # push 時のコミットメッセージ
-jobs: <number>            # 並列実行数の上限（省略時 20）
+  default: <string>           # push 時のコミットメッセージ
+jobs: <number>                # 並列実行数の上限（省略時 20）
 repos:
-  - enabled: <bool>       # false なら対象外
-    remote: <string>      # git リモート URL
-    branch: <string>      # clone 時のブランチ
-    group: <string>       # clone 先サブディレクトリ名
+  - enabled: <bool>           # false なら対象外
+    remote: <string>          # git リモート URL
+    branch: <string>          # clone 時のブランチ
+    group: <string>           # clone 先サブディレクトリ名
 ```
 
 ### フィールド詳細
 
 | フィールド | 型 | 必須 | 説明 |
 |---|---|---|---|
-| `user.name` | String | yes | 全リポジトリに設定する git user.name |
-| `user.email` | String | yes | 全リポジトリに設定する git user.email |
+| `config` | HashMap | no | `git config --local` に渡す key-value。`user.name`, `user.email`, `pull.rebase` など何でも可 |
 | `comments.default` | String | yes | push 時の固定コミットメッセージ |
 | `jobs` | usize | no | 並列実行数の上限。CLI `-j` で上書き可。デフォルト 20 |
 | `repos[].enabled` | bool | yes | false で対象から除外 |
