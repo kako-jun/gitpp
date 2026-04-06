@@ -60,6 +60,12 @@ impl Drop for SemaphoreGuard {
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("gitpp {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     let global_opts = parse_global_options(&args);
 
     let setting = match setting_util::load(global_opts.config_path.as_deref()) {
@@ -416,8 +422,9 @@ fn show_help() {
         "  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m           Max parallel jobs (default: from gitpp.yaml, or 20)"
     );
     println!(
-        "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout\n"
+        "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout"
     );
+    println!("  \x1b[1;33m-V\x1b[0m, \x1b[1;33m--version\x1b[0m            Show version\n");
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone      st → status");
     println!("  pul, pl  → pull       di → diff");
