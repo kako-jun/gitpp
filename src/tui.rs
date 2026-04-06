@@ -72,7 +72,7 @@ impl TuiApp {
             detail_scroll: 0,
             status_message: None,
             clipboard: arboard::Clipboard::new().ok(),
-            auto_exit_hint: false,
+            auto_exit_hint: true,
         }
     }
 
@@ -189,7 +189,6 @@ impl TuiApp {
             drop(repos);
 
             if all_done {
-                self.auto_exit_hint = true;
                 terminal.draw(|f| self.ui(f))?;
                 if event::poll(Duration::from_secs(2))? {
                     if let Event::Key(key) = event::read()? {
@@ -497,7 +496,7 @@ impl TuiApp {
         let mut footer_lines = vec![stats_line];
         if self.auto_exit_hint {
             footer_lines.push(Line::from(Span::styled(
-                "Auto-exit in 2s — press any key to browse",
+                "Will auto-exit 2s after completion — press any key to browse",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
