@@ -163,6 +163,9 @@ A fullscreen TUI built with ratatui and crossterm.
 | G | Jump to last item |
 | Enter | Toggle detail pane (shown by default) |
 | h / l / ← / → | Scroll detail pane vertically (3 lines at a time) |
+| n | Jump to next Failed item (wraps around) |
+| N | Jump to previous Failed item (wraps around) |
+| y | Copy detail pane content to clipboard |
 | Esc | Close detail pane (or exit browse mode when pane is already closed) |
 | q | Force quit |
 
