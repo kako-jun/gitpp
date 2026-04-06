@@ -371,23 +371,25 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
             .count();
+        let done = updated + unchanged + failed;
         drop(repos);
 
         let footer = Paragraph::new(Line::from(vec![
             Span::styled("Total: ", Style::default().fg(Color::White)),
             Span::styled(format!("{total} "), Style::default().fg(Color::Cyan)),
             Span::raw("| "),
+            Span::styled("Done: ", Style::default().fg(Color::White)),
+            Span::styled(format!("{done} "), Style::default().fg(Color::Yellow)),
+            Span::raw("("),
             Span::styled("Updated: ", Style::default().fg(Color::White)),
-            Span::styled(format!("{updated} "), Style::default().fg(Color::Green)),
-            Span::raw("| "),
+            Span::styled(format!("{updated}"), Style::default().fg(Color::Green)),
+            Span::raw(" / "),
             Span::styled("Unchanged: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("{unchanged} "),
-                Style::default().fg(Color::DarkGray),
-            ),
-            Span::raw("| "),
+            Span::styled(format!("{unchanged}"), Style::default().fg(Color::DarkGray)),
+            Span::raw(" / "),
             Span::styled("Failed: ", Style::default().fg(Color::White)),
-            Span::styled(format!("{failed} "), Style::default().fg(Color::Red)),
+            Span::styled(format!("{failed}"), Style::default().fg(Color::Red)),
+            Span::raw(")"),
         ]))
         .block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, chunks[2]);
