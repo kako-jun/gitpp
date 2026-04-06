@@ -292,15 +292,17 @@ impl TuiApp {
             .filter(|r| r.status == RepoStatus::Failed)
             .collect();
 
+        let done = updated_count + unchanged_count + failed.len();
+
         if failed.is_empty() {
-            println!("Total: {total} | Updated: {updated_count} | Unchanged: {unchanged_count}");
+            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: 0)");
             return;
         }
 
         // Plain text, no ANSI codes — clipboard-friendly
         let failed_count = failed.len();
         println!(
-            "Total: {total} | Updated: {updated_count} | Unchanged: {unchanged_count} | Failed: {failed_count}\n"
+            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: {failed_count})\n"
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
