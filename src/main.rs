@@ -381,7 +381,7 @@ fn spawn_clone_workers(
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
-                        RepoStatus::Success,
+                        RepoStatus::Unchanged,
                         "Already cloned",
                         100,
                     );
@@ -425,7 +425,13 @@ fn spawn_clone_workers(
             }
 
             if result.success {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+                update_repo_status(
+                    &repos_handle,
+                    &repo_name,
+                    RepoStatus::Updated,
+                    "Cloned",
+                    100,
+                );
             } else {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }
@@ -493,7 +499,23 @@ fn spawn_pull_workers(
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+                if result.had_changes {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Updated,
+                        "Updated",
+                        100,
+                    );
+                } else {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Unchanged,
+                        "Unchanged",
+                        100,
+                    );
+                }
             } else {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }
@@ -569,7 +591,23 @@ fn spawn_push_workers(
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Success, "Done", 100);
+                if result.had_changes {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Updated,
+                        "Updated",
+                        100,
+                    );
+                } else {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Unchanged,
+                        "Unchanged",
+                        100,
+                    );
+                }
             } else {
                 update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
             }

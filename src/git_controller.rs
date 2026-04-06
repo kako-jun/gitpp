@@ -4,6 +4,7 @@ use std::process::Command;
 pub struct GitResult {
     pub output: String,
     pub success: bool,
+    pub had_changes: bool,
 }
 
 pub struct GitController {
@@ -22,11 +23,20 @@ impl GitController {
     }
 
     pub fn git_clone(&self, dir: &Path, remote: &str, branch: &str) -> GitResult {
-        self.exec_git(dir, &["clone", remote, "-b", branch])
+        let result = self.exec_git(dir, &["clone", remote, "-b", branch]);
+        GitResult {
+            had_changes: result.success,
+            ..result
+        }
     }
 
     pub fn git_pull(&self, dir: &Path) -> GitResult {
-        self.exec_git(dir, &["pull"])
+        let result = self.exec_git(dir, &["pull"]);
+        let had_changes = result.success && !result.output.contains("Already up to date");
+        GitResult {
+            had_changes,
+            ..result
+        }
     }
 
     pub fn git_push(&self, dir: &Path, commit_message: &str) -> GitResult {
@@ -38,6 +48,7 @@ impl GitController {
             return GitResult {
                 output: all_output,
                 success: false,
+                had_changes: false,
             };
         }
 
@@ -49,11 +60,13 @@ impl GitController {
                 return GitResult {
                     output: all_output,
                     success: true,
+                    had_changes: false,
                 };
             }
             return GitResult {
                 output: all_output,
                 success: false,
+                had_changes: false,
             };
         }
 
@@ -63,6 +76,7 @@ impl GitController {
         GitResult {
             output: all_output,
             success: push_result.success,
+            had_changes: true,
         }
     }
 
@@ -84,6 +98,7 @@ impl GitController {
                 return GitResult {
                     output: format!("error: {e}"),
                     success: false,
+                    had_changes: false,
                 }
             }
         };
@@ -97,6 +112,7 @@ impl GitController {
         GitResult {
             success: output.status.success(),
             output: text,
+            had_changes: false,
         }
     }
 }
