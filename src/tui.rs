@@ -43,6 +43,7 @@ pub struct TuiApp {
     scroll_offset: usize,
     show_detail: bool,
     detail_scroll: u16,
+    status_message: Option<(String, std::time::Instant)>,
 }
 
 impl TuiApp {
@@ -67,6 +68,7 @@ impl TuiApp {
             scroll_offset: 0,
             show_detail: true,
             detail_scroll: 0,
+            status_message: None,
         }
     }
 
@@ -272,8 +274,68 @@ impl TuiApp {
             KeyCode::Esc => {
                 self.show_detail = false;
             }
+            KeyCode::Char('y') => {
+                self.copy_detail_to_clipboard();
+            }
+            KeyCode::Char('n') => {
+                self.jump_to_next_failed(repo_count);
+            }
+            KeyCode::Char('N') => {
+                self.jump_to_prev_failed(repo_count);
+            }
             _ => {}
         }
+    }
+
+    fn copy_detail_to_clipboard(&mut self) {
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+        let text = if let Some(repo) = repos.get(self.selected) {
+            if repo.output.is_empty() {
+                repo.message.clone()
+            } else {
+                repo.output.clone()
+            }
+        } else {
+            return;
+        };
+        drop(repos);
+
+        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+            Ok(()) => {
+                self.status_message = Some(("Copied!".to_string(), std::time::Instant::now()));
+            }
+            Err(e) => {
+                self.status_message =
+                    Some((format!("Copy failed: {e}"), std::time::Instant::now()));
+            }
+        }
+    }
+
+    fn jump_to_next_failed(&mut self, repo_count: usize) {
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+        // Search from current+1 to end, then wrap from 0 to current
+        for offset in 1..repo_count {
+            let idx = (self.selected + offset) % repo_count;
+            if repos[idx].status == RepoStatus::Failed {
+                self.selected = idx;
+                self.detail_scroll = 0;
+                return;
+            }
+        }
+        self.status_message = Some(("No errors".to_string(), std::time::Instant::now()));
+    }
+
+    fn jump_to_prev_failed(&mut self, repo_count: usize) {
+        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+        for offset in 1..repo_count {
+            let idx = (self.selected + repo_count - offset) % repo_count;
+            if repos[idx].status == RepoStatus::Failed {
+                self.selected = idx;
+                self.detail_scroll = 0;
+                return;
+            }
+        }
+        self.status_message = Some(("No errors".to_string(), std::time::Instant::now()));
     }
 
     fn print_summary(&self) {
@@ -329,7 +391,7 @@ impl TuiApp {
             .split(f.area());
 
         // Header
-        let header = Paragraph::new(vec![Line::from(vec![
+        let mut header_spans = vec![
             Span::styled(
                 "gitpp",
                 Style::default()
@@ -338,11 +400,32 @@ impl TuiApp {
             ),
             Span::raw("  "),
             Span::styled(
-                "j/k:move  Enter:detail  h/l:scroll  q:quit",
+                "j/k:move  n/N:error  y:copy  Enter:detail  h/l:scroll  q:quit",
                 Style::default().fg(Color::Gray),
             ),
-        ])])
-        .block(Block::default().borders(Borders::ALL));
+        ];
+
+        // Status message (auto-expires after 2 seconds)
+        let show_msg = match &self.status_message {
+            Some((msg, at)) if at.elapsed() < Duration::from_secs(2) => Some(msg.clone()),
+            Some(_) => None,
+            None => None,
+        };
+        if show_msg.is_none() && self.status_message.is_some() {
+            self.status_message = None;
+        }
+        if let Some(msg) = show_msg {
+            header_spans.push(Span::raw("  "));
+            header_spans.push(Span::styled(
+                msg,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        }
+
+        let header = Paragraph::new(vec![Line::from(header_spans)])
+            .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
         // Main area: repo list (+ optional detail pane)

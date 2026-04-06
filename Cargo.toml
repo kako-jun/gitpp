@@ -23,6 +23,7 @@ crossterm = "0.28"
 rustyline = "14.0"
 dirs = "5.0"
 ctrlc = "3.5.2"
+arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
