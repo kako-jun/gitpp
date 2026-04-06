@@ -45,6 +45,7 @@ pub struct TuiApp {
     detail_scroll: u16,
     status_message: Option<(String, Instant)>,
     clipboard: Option<arboard::Clipboard>,
+    auto_exit_hint: bool,
 }
 
 impl TuiApp {
@@ -71,6 +72,7 @@ impl TuiApp {
             detail_scroll: 0,
             status_message: None,
             clipboard: arboard::Clipboard::new().ok(),
+            auto_exit_hint: false,
         }
     }
 
@@ -187,8 +189,8 @@ impl TuiApp {
             drop(repos);
 
             if all_done {
-                // Show final state briefly, then allow user to browse
-                // Auto-exit after 2 seconds if no key pressed
+                self.auto_exit_hint = true;
+                terminal.draw(|f| self.ui(f))?;
                 if event::poll(Duration::from_secs(2))? {
                     if let Event::Key(key) = event::read()? {
                         match key.code {
@@ -389,18 +391,23 @@ impl TuiApp {
     }
 
     fn ui(&mut self, f: &mut Frame) {
+        let footer_height = if self.auto_exit_hint { 4 } else { 3 };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
                 Constraint::Length(4),
                 Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Length(footer_height),
             ])
             .split(f.area());
 
         // Header (2 lines)
-        let header_line1 = Line::from(vec![
+        let header_line2 = Line::from(Span::styled(
+            "      Enter:detail  h/l:scroll  y:copy  Esc:close  q:quit",
+            Style::default().fg(Color::Gray),
+        ));
+        let mut header_line1_spans = vec![
             Span::styled(
                 "gitpp",
                 Style::default()
@@ -409,17 +416,12 @@ impl TuiApp {
             ),
             Span::raw("  "),
             Span::styled(
-                "j/k:move  g/G:top/bottom  n/N:error  y:copy",
+                "j/k:move  g/G:top/end  n/N:next/prev error",
                 Style::default().fg(Color::Gray),
             ),
-        ]);
-        let header_line2 = Line::from(Span::styled(
-            "      Enter:detail  h/l:scroll  Esc:close  q:quit",
-            Style::default().fg(Color::Gray),
-        ));
-        let mut header_lines = vec![header_line1, header_line2];
+        ];
 
-        // Status message (auto-expires after 2 seconds)
+        // Status message (auto-expires after 2 seconds) — appended to line 1
         let show_msg = match &self.status_message {
             Some((msg, at)) if at.elapsed() < Duration::from_secs(2) => Some(msg.clone()),
             Some(_) => None,
@@ -429,15 +431,17 @@ impl TuiApp {
             self.status_message = None;
         }
         if let Some(msg) = show_msg {
-            header_lines.push(Line::from(Span::styled(
-                format!("  {msg}"),
+            header_line1_spans.push(Span::raw("  "));
+            header_line1_spans.push(Span::styled(
+                msg,
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
-            )));
+            ));
         }
 
-        let header = Paragraph::new(header_lines).block(Block::default().borders(Borders::ALL));
+        let header = Paragraph::new(vec![Line::from(header_line1_spans), header_line2])
+            .block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
         // Main area: repo list (+ optional detail pane)
@@ -471,7 +475,7 @@ impl TuiApp {
         let done = updated + unchanged + failed;
         drop(repos);
 
-        let footer = Paragraph::new(Line::from(vec![
+        let stats_line = Line::from(vec![
             Span::styled("Total: ", Style::default().fg(Color::White)),
             Span::styled(format!("{total} "), Style::default().fg(Color::Cyan)),
             Span::raw("| "),
@@ -487,8 +491,19 @@ impl TuiApp {
             Span::styled("Failed: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed}"), Style::default().fg(Color::Red)),
             Span::raw(")"),
-        ]))
-        .block(Block::default().borders(Borders::ALL));
+        ]);
+
+        let mut footer_lines = vec![stats_line];
+        if self.auto_exit_hint {
+            footer_lines.push(Line::from(Span::styled(
+                "Auto-exit in 2s — press any key to browse",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )));
+        }
+
+        let footer = Paragraph::new(footer_lines).block(Block::default().borders(Borders::ALL));
         f.render_widget(footer, chunks[2]);
     }
 
