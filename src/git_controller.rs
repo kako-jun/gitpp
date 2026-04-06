@@ -52,7 +52,7 @@ impl GitController {
             };
         }
 
-        let commit_result = self.exec_git(dir, &["commit", "-m", commit_message]);
+        let mut commit_result = self.exec_git(dir, &["commit", "-m", commit_message]);
         all_output.push_str(&commit_result.output);
         if !commit_result.success {
             // "nothing to commit" is not a failure — just skip push
@@ -63,11 +63,22 @@ impl GitController {
                     had_changes: false,
                 };
             }
-            return GitResult {
-                output: all_output,
-                success: false,
-                had_changes: false,
-            };
+            // Pre-commit hook may have modified files (e.g. formatter).
+            // Retry once: re-add changed files and commit again.
+            all_output.push_str("[gitpp] pre-commit hook may have modified files, retrying...\n");
+            let retry_add = self.exec_git(dir, &["add", "-A"]);
+            all_output.push_str(&retry_add.output);
+            if retry_add.success {
+                commit_result = self.exec_git(dir, &["commit", "-m", commit_message]);
+                all_output.push_str(&commit_result.output);
+            }
+            if !commit_result.success {
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                };
+            }
         }
 
         let push_result = self.exec_git(dir, &["push"]);

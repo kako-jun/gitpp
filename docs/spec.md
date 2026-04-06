@@ -201,6 +201,10 @@ For push, the steps run in sequence: add → commit → push. A failure at any s
 If `git commit` exits with a non-zero code due to "nothing to commit", it is treated as a success
 (`had_changes: false`) and push is skipped.
 
+If `git commit` fails for other reasons (e.g. a pre-commit hook that modifies files), gitpp retries
+once: re-add all changes and commit again. This handles the common case where a formatter hook
+modifies files during the first commit attempt. If the retry also fails, the repository is marked Failed.
+
 ### Summary Output After TUI Exit
 
 After the TUI closes, a plain-text summary (no ANSI escape codes) is printed to stdout.
