@@ -393,14 +393,14 @@ impl TuiApp {
             .direction(Direction::Vertical)
             .margin(1)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(4),
                 Constraint::Min(0),
                 Constraint::Length(3),
             ])
             .split(f.area());
 
-        // Header
-        let mut header_spans = vec![
+        // Header (2 lines)
+        let header_line1 = Line::from(vec![
             Span::styled(
                 "gitpp",
                 Style::default()
@@ -409,10 +409,15 @@ impl TuiApp {
             ),
             Span::raw("  "),
             Span::styled(
-                "j/k:move  n/N:error  y:copy  Enter:detail  h/l:scroll  q:quit",
+                "j/k:move  g/G:top/bottom  n/N:error  y:copy",
                 Style::default().fg(Color::Gray),
             ),
-        ];
+        ]);
+        let header_line2 = Line::from(Span::styled(
+            "      Enter:detail  h/l:scroll  Esc:close  q:quit",
+            Style::default().fg(Color::Gray),
+        ));
+        let mut header_lines = vec![header_line1, header_line2];
 
         // Status message (auto-expires after 2 seconds)
         let show_msg = match &self.status_message {
@@ -424,17 +429,15 @@ impl TuiApp {
             self.status_message = None;
         }
         if let Some(msg) = show_msg {
-            header_spans.push(Span::raw("  "));
-            header_spans.push(Span::styled(
-                msg,
+            header_lines.push(Line::from(Span::styled(
+                format!("  {msg}"),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
-            ));
+            )));
         }
 
-        let header = Paragraph::new(vec![Line::from(header_spans)])
-            .block(Block::default().borders(Borders::ALL));
+        let header = Paragraph::new(header_lines).block(Block::default().borders(Borders::ALL));
         f.render_widget(header, chunks[0]);
 
         // Main area: repo list (+ optional detail pane)
