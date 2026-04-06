@@ -209,10 +209,11 @@ impl TuiApp {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    if let KeyCode::Char('q') = key.code {
-                        break;
+                    match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Esc if !self.show_detail => break,
+                        _ => self.handle_key(key.code),
                     }
-                    self.handle_key(key.code);
                 }
             }
         }
