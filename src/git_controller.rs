@@ -101,7 +101,7 @@ impl GitController {
     }
 
     pub fn git_diff_stat(&self, dir: &Path) -> GitResult {
-        let result = self.exec_git(dir, &["diff", "--stat"]);
+        let result = self.exec_git(dir, &["diff", "--stat", "HEAD"]);
         let had_changes = result.success && !result.output.trim().is_empty();
         GitResult {
             had_changes,
@@ -111,8 +111,9 @@ impl GitController {
 
     pub fn git_fetch(&self, dir: &Path) -> GitResult {
         let result = self.exec_git(dir, &["fetch"]);
+        let had_changes = result.success && !result.output.trim().is_empty();
         GitResult {
-            had_changes: false,
+            had_changes,
             ..result
         }
     }
@@ -132,14 +133,14 @@ impl GitController {
         let current = self.exec_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
         let current_branch = current.output.trim().to_string();
 
-        // Try main first, then master
+        // Try main first, then master (use refs/heads/ to match local branches only)
         let target = if self
-            .exec_git(dir, &["rev-parse", "--verify", "main"])
+            .exec_git(dir, &["rev-parse", "--verify", "refs/heads/main"])
             .success
         {
             "main"
         } else if self
-            .exec_git(dir, &["rev-parse", "--verify", "master"])
+            .exec_git(dir, &["rev-parse", "--verify", "refs/heads/master"])
             .success
         {
             "master"

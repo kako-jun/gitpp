@@ -359,6 +359,9 @@ fn execute_command(
             show_help();
             return Ok(());
         }
+        "stash" => {
+            return Err("Unknown command: stash. Did you mean 'stash list' (or 'sl')?".to_string());
+        }
         _ => {
             return Err(format!("Unknown command: {command}"));
         }
@@ -393,12 +396,14 @@ fn show_help() {
     println!(
         "  \x1b[1;33mstatus\x1b[0m               Show uncommitted changes (git status --porcelain)"
     );
-    println!("  \x1b[1;33mdiff\x1b[0m                 Show diff summary (git diff --stat)");
+    println!("  \x1b[1;33mdiff\x1b[0m                 Show diff summary (staged + unstaged)");
     println!("  \x1b[1;33mfetch\x1b[0m                Fetch from remote");
     println!("  \x1b[1;33mbranch\x1b[0m               Show current branch");
-    println!("  \x1b[1;33mswitch\x1b[0m               Switch to default branch (main or master)");
+    println!(
+        "  \x1b[1;33mswitch\x1b[0m               Switch to default branch (requires Git 2.23+)"
+    );
     println!("  \x1b[1;33mstash list\x1b[0m           List stashed changes");
-    println!("  \x1b[1;33mgc\x1b[0m                   Run garbage collection");
+    println!("  \x1b[1;33mgc\x1b[0m                   Run garbage collection (I/O heavy, use -j to limit)");
     println!("  \x1b[1;33mhelp\x1b[0m                 Show this help message\n");
     println!("\x1b[1;36mGlobal Options:\x1b[0m");
     println!(

@@ -159,16 +159,18 @@ pub fn run_interactive_mode() -> rustyline::Result<Vec<String>> {
 
 fn show_help() {
     println!("\n\x1b[1;36mAvailable Commands:\x1b[0m");
-    println!("  \x1b[1;33mclone\x1b[0m              Clone all enabled repositories");
-    println!("  \x1b[1;33mpull\x1b[0m               Pull all enabled repositories");
-    println!("  \x1b[1;33mpush\x1b[0m               Push all enabled repositories");
+    println!("  \x1b[1;33mclone\x1b[0m (clo, cl)    Clone all enabled repositories");
+    println!("  \x1b[1;33mpull\x1b[0m (pul, pl)     Pull all enabled repositories");
+    println!("  \x1b[1;33mpush\x1b[0m (pus, ps)     Push all enabled repositories");
     println!("  \x1b[1;33mstatus\x1b[0m (st)        Show uncommitted changes");
     println!("  \x1b[1;33mdiff\x1b[0m (di)          Show diff summary");
     println!("  \x1b[1;33mfetch\x1b[0m (fe)         Fetch from remote");
     println!("  \x1b[1;33mbranch\x1b[0m (br)        Show current branch");
-    println!("  \x1b[1;33mswitch\x1b[0m (sw)        Switch to default branch");
+    println!("  \x1b[1;33mswitch\x1b[0m (sw)        Switch to default branch (requires Git 2.23+)");
     println!("  \x1b[1;33mstash list\x1b[0m (sl)    List stashed changes");
-    println!("  \x1b[1;33mgc\x1b[0m                 Run garbage collection");
+    println!(
+        "  \x1b[1;33mgc\x1b[0m                 Run garbage collection (I/O heavy, use -j to limit)"
+    );
     println!("  \x1b[1;33mhelp\x1b[0m, \x1b[1;33m?\x1b[0m            Show this help message");
     println!("  \x1b[1;33mexit\x1b[0m, \x1b[1;33mquit\x1b[0m         Exit interactive mode");
     println!("\n\x1b[1;36mOptions:\x1b[0m");
