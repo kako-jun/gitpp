@@ -91,6 +91,98 @@ impl GitController {
         }
     }
 
+    pub fn git_status(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["status", "--porcelain"]);
+        let had_changes = result.success && !result.output.trim().is_empty();
+        GitResult {
+            had_changes,
+            ..result
+        }
+    }
+
+    pub fn git_diff_stat(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["diff", "--stat"]);
+        let had_changes = result.success && !result.output.trim().is_empty();
+        GitResult {
+            had_changes,
+            ..result
+        }
+    }
+
+    pub fn git_fetch(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["fetch"]);
+        GitResult {
+            had_changes: false,
+            ..result
+        }
+    }
+
+    pub fn git_branch(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let branch_name = result.output.trim();
+        let had_changes = result.success && branch_name != "main" && branch_name != "master";
+        GitResult {
+            had_changes,
+            ..result
+        }
+    }
+
+    pub fn git_switch_default(&self, dir: &Path) -> GitResult {
+        // Detect current branch first
+        let current = self.exec_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let current_branch = current.output.trim().to_string();
+
+        // Try main first, then master
+        let target = if self
+            .exec_git(dir, &["rev-parse", "--verify", "main"])
+            .success
+        {
+            "main"
+        } else if self
+            .exec_git(dir, &["rev-parse", "--verify", "master"])
+            .success
+        {
+            "master"
+        } else {
+            return GitResult {
+                output: "error: neither main nor master branch found".to_string(),
+                success: false,
+                had_changes: false,
+            };
+        };
+
+        if current_branch == target {
+            return GitResult {
+                output: format!("Already on '{target}'\n"),
+                success: true,
+                had_changes: false,
+            };
+        }
+
+        let result = self.exec_git(dir, &["switch", target]);
+        GitResult {
+            had_changes: result.success,
+            ..result
+        }
+    }
+
+    pub fn git_stash_list(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["stash", "list"]);
+        let had_changes = result.success && !result.output.trim().is_empty();
+        GitResult {
+            had_changes,
+            ..result
+        }
+    }
+
+    pub fn git_gc(&self, dir: &Path) -> GitResult {
+        let result = self.exec_git(dir, &["gc"]);
+        GitResult {
+            had_changes: false,
+            ..result
+        }
+    }
+
     pub fn git_remote_url(&self, dir: &Path) -> String {
         let result = self.exec_git(dir, &["remote", "get-url", "origin"]);
         result.output.trim().to_string()

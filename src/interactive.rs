@@ -17,6 +17,13 @@ impl GitppHelper {
                 "clone".to_string(),
                 "pull".to_string(),
                 "push".to_string(),
+                "status".to_string(),
+                "diff".to_string(),
+                "fetch".to_string(),
+                "branch".to_string(),
+                "switch".to_string(),
+                "stash list".to_string(),
+                "gc".to_string(),
                 "help".to_string(),
                 "exit".to_string(),
                 "quit".to_string(),
@@ -155,6 +162,13 @@ fn show_help() {
     println!("  \x1b[1;33mclone\x1b[0m              Clone all enabled repositories");
     println!("  \x1b[1;33mpull\x1b[0m               Pull all enabled repositories");
     println!("  \x1b[1;33mpush\x1b[0m               Push all enabled repositories");
+    println!("  \x1b[1;33mstatus\x1b[0m (st)        Show uncommitted changes");
+    println!("  \x1b[1;33mdiff\x1b[0m (di)          Show diff summary");
+    println!("  \x1b[1;33mfetch\x1b[0m (fe)         Fetch from remote");
+    println!("  \x1b[1;33mbranch\x1b[0m (br)        Show current branch");
+    println!("  \x1b[1;33mswitch\x1b[0m (sw)        Switch to default branch");
+    println!("  \x1b[1;33mstash list\x1b[0m (sl)    List stashed changes");
+    println!("  \x1b[1;33mgc\x1b[0m                 Run garbage collection");
     println!("  \x1b[1;33mhelp\x1b[0m, \x1b[1;33m?\x1b[0m            Show this help message");
     println!("  \x1b[1;33mexit\x1b[0m, \x1b[1;33mquit\x1b[0m         Exit interactive mode");
     println!("\n\x1b[1;36mOptions:\x1b[0m");

@@ -243,25 +243,38 @@ fn execute_command(
         })
         .collect();
 
-    let canonical_cmd = match command.as_str() {
-        "clone" | "clo" | "cl" => "clone",
-        "pull" | "pul" | "pl" => "pull",
-        "push" | "pus" | "ps" => "push",
-        other => other,
+    // Handle 2-word "stash list" and its shortcut "sl"
+    let canonical_cmd = if command == "sl"
+        || (command == "stash" && filtered_args.get(1).map(|s| s.as_str()) == Some("list"))
+    {
+        "stash list"
+    } else {
+        match command.as_str() {
+            "clone" | "clo" | "cl" => "clone",
+            "pull" | "pul" | "pl" => "pull",
+            "push" | "pus" | "ps" => "push",
+            "status" | "st" => "status",
+            "diff" | "di" => "diff",
+            "fetch" | "fe" => "fetch",
+            "branch" | "br" => "branch",
+            "switch" | "sw" => "switch",
+            "gc" => "gc",
+            other => other,
+        }
     };
 
     let mut tui_app = TuiApp::new(repo_names, repo_paths, canonical_cmd);
     let repos_handle = tui_app.get_repos_handle();
     let semaphore = Arc::new(Semaphore::new(jobs));
 
-    match command.as_str() {
-        "clone" | "clo" | "cl" => {
+    match canonical_cmd {
+        "clone" => {
             spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
-        "pull" | "pul" | "pl" => {
+        "pull" => {
             spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
-        "push" | "pus" | "ps" => {
+        "push" => {
             let msg = setting
                 .comments
                 .get("default")
@@ -271,6 +284,76 @@ fn execute_command(
                 return Err("Push is disabled: comments.default is empty or not set in gitpp.yaml. Set a commit message to enable push.".to_string());
             }
             spawn_push_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
+        }
+        "status" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_status(dir),
+                "Checking status...",
+            );
+        }
+        "diff" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_diff_stat(dir),
+                "Diffing...",
+            );
+        }
+        "fetch" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_fetch(dir),
+                "Fetching...",
+            );
+        }
+        "branch" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_branch(dir),
+                "Checking branch...",
+            );
+        }
+        "switch" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_switch_default(dir),
+                "Switching...",
+            );
+        }
+        "stash list" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_stash_list(dir),
+                "Checking stash...",
+            );
+        }
+        "gc" => {
+            spawn_generic_workers(
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                |git, dir| git.git_gc(dir),
+                "Running gc...",
+            );
         }
         "help" | "?" => {
             show_help();
@@ -307,6 +390,15 @@ fn show_help() {
     println!("  \x1b[1;33mclone\x1b[0m                Clone all enabled repositories");
     println!("  \x1b[1;33mpull\x1b[0m                 Pull all enabled repositories");
     println!("  \x1b[1;33mpush\x1b[0m                 Push all enabled repositories");
+    println!(
+        "  \x1b[1;33mstatus\x1b[0m               Show uncommitted changes (git status --porcelain)"
+    );
+    println!("  \x1b[1;33mdiff\x1b[0m                 Show diff summary (git diff --stat)");
+    println!("  \x1b[1;33mfetch\x1b[0m                Fetch from remote");
+    println!("  \x1b[1;33mbranch\x1b[0m               Show current branch");
+    println!("  \x1b[1;33mswitch\x1b[0m               Switch to default branch (main or master)");
+    println!("  \x1b[1;33mstash list\x1b[0m           List stashed changes");
+    println!("  \x1b[1;33mgc\x1b[0m                   Run garbage collection");
     println!("  \x1b[1;33mhelp\x1b[0m                 Show this help message\n");
     println!("\x1b[1;36mGlobal Options:\x1b[0m");
     println!(
@@ -322,9 +414,11 @@ fn show_help() {
         "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout\n"
     );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
-    println!("  clo, cl  → clone");
-    println!("  pul, pl  → pull");
-    println!("  pus, ps  → push\n");
+    println!("  clo, cl  → clone      st → status");
+    println!("  pul, pl  → pull       di → diff");
+    println!("  pus, ps  → push       fe → fetch");
+    println!("  br → branch           sw → switch");
+    println!("  sl → stash list       gc → gc\n");
 }
 
 fn spawn_clone_workers(
@@ -588,6 +682,76 @@ fn spawn_push_workers(
             );
 
             let result = git.git_push(&repo_dir, &commit_msg);
+            append_repo_output(&repos_handle, &repo_name, &result.output);
+
+            if result.success {
+                if result.had_changes {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Updated,
+                        "Updated",
+                        100,
+                    );
+                } else {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Unchanged,
+                        "Unchanged",
+                        100,
+                    );
+                }
+            } else {
+                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
+            }
+        });
+    }
+}
+
+fn spawn_generic_workers(
+    repos: &[&setting_util::Repos],
+    repos_handle: Arc<Mutex<Vec<tui::RepoProgress>>>,
+    semaphore: &Arc<Semaphore>,
+    base_dir: &Path,
+    operation: fn(&GitController, &Path) -> git_controller::GitResult,
+    running_message: &str,
+) {
+    for repo in repos {
+        let repo_data = (*repo).clone();
+        let repos_handle = Arc::clone(&repos_handle);
+        let repo_name = extract_repo_name(&repo.remote);
+        let sem = Arc::clone(semaphore);
+        let base = base_dir.to_path_buf();
+        let msg = running_message.to_string();
+
+        thread::spawn(move || {
+            let _guard = sem.acquire();
+
+            update_repo_status(
+                &repos_handle,
+                &repo_name,
+                RepoStatus::Running,
+                "Starting...",
+                10,
+            );
+
+            let git = GitController::new();
+            let repo_dir = base.join(&repo_data.group).join(&repo_name);
+
+            if !repo_dir.exists() {
+                update_repo_status(
+                    &repos_handle,
+                    &repo_name,
+                    RepoStatus::Failed,
+                    &format!("Directory not found: {}", repo_dir.display()),
+                    100,
+                );
+                return;
+            }
+
+            update_repo_status(&repos_handle, &repo_name, RepoStatus::Running, &msg, 50);
+            let result = operation(&git, &repo_dir);
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
