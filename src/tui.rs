@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RepoStatus {
@@ -43,7 +43,8 @@ pub struct TuiApp {
     scroll_offset: usize,
     show_detail: bool,
     detail_scroll: u16,
-    status_message: Option<(String, std::time::Instant)>,
+    status_message: Option<(String, Instant)>,
+    clipboard: Option<arboard::Clipboard>,
 }
 
 impl TuiApp {
@@ -69,6 +70,7 @@ impl TuiApp {
             show_detail: true,
             detail_scroll: 0,
             status_message: None,
+            clipboard: arboard::Clipboard::new().ok(),
         }
     }
 
@@ -300,42 +302,49 @@ impl TuiApp {
         };
         drop(repos);
 
-        match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-            Ok(()) => {
-                self.status_message = Some(("Copied!".to_string(), std::time::Instant::now()));
-            }
-            Err(e) => {
-                self.status_message =
-                    Some((format!("Copy failed: {e}"), std::time::Instant::now()));
+        match &mut self.clipboard {
+            Some(cb) => match cb.set_text(text) {
+                Ok(()) => {
+                    self.status_message = Some(("Copied!".to_string(), Instant::now()));
+                }
+                Err(e) => {
+                    self.status_message = Some((format!("Copy failed: {e}"), Instant::now()));
+                }
+            },
+            None => {
+                self.status_message = Some(("Clipboard unavailable".to_string(), Instant::now()));
             }
         }
     }
 
     fn jump_to_next_failed(&mut self, repo_count: usize) {
-        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
-        // Search from current+1 to end, then wrap from 0 to current
-        for offset in 1..repo_count {
-            let idx = (self.selected + offset) % repo_count;
-            if repos[idx].status == RepoStatus::Failed {
-                self.selected = idx;
-                self.detail_scroll = 0;
-                return;
-            }
+        let found = {
+            let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+            (1..repo_count)
+                .map(|offset| (self.selected + offset) % repo_count)
+                .find(|&idx| repos[idx].status == RepoStatus::Failed)
+        };
+        if let Some(idx) = found {
+            self.selected = idx;
+            self.detail_scroll = 0;
+        } else {
+            self.status_message = Some(("No errors".to_string(), Instant::now()));
         }
-        self.status_message = Some(("No errors".to_string(), std::time::Instant::now()));
     }
 
     fn jump_to_prev_failed(&mut self, repo_count: usize) {
-        let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
-        for offset in 1..repo_count {
-            let idx = (self.selected + repo_count - offset) % repo_count;
-            if repos[idx].status == RepoStatus::Failed {
-                self.selected = idx;
-                self.detail_scroll = 0;
-                return;
-            }
+        let found = {
+            let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+            (1..repo_count)
+                .map(|offset| (self.selected + repo_count - offset) % repo_count)
+                .find(|&idx| repos[idx].status == RepoStatus::Failed)
+        };
+        if let Some(idx) = found {
+            self.selected = idx;
+            self.detail_scroll = 0;
+        } else {
+            self.status_message = Some(("No errors".to_string(), Instant::now()));
         }
-        self.status_message = Some(("No errors".to_string(), std::time::Instant::now()));
     }
 
     fn print_summary(&self) {
