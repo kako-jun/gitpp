@@ -56,7 +56,7 @@ If the target directory already contains a `.git` folder, gitpp fetches the actu
 | Situation | Result |
 |---|---|
 | No `.git` present | Proceed with normal clone |
-| `.git` exists, remote matches | Display "Already cloned" (Success). Apply config only. |
+| `.git` exists, remote matches | Display "Already cloned" (Unchanged). Apply config only. |
 | `.git` exists, remote mismatch | Display "Remote mismatch" (Failed). Print expected vs actual remote. |
 
 ## Operating Modes
@@ -179,19 +179,24 @@ Pressing `q` at any time during execution exits immediately.
 
 | Status | Icon | Color | Meaning |
 |---|---|---|---|
-| Pending | ⏸ | DarkGray | Waiting, including semaphore queue |
-| Running | ⚙ | Yellow | In progress |
-| Success | ✓ | Green | Completed successfully |
+| Waiting | ⏸ | DarkGray | Waiting, including semaphore queue |
+| Running | ▶ | Yellow | In progress |
+| Updated | ✓ | Green | Completed with changes |
+| Unchanged | ─ | DarkGray | Completed with no changes |
 | Failed | ✗ | Red | Encountered an error |
 
 ### Error Detection
 
 Exit code of the git subprocess determines the result. Any non-zero exit code → Failed.
 
+`GitResult` includes a `had_changes` field that distinguishes Updated from Unchanged:
+- **pull**: `had_changes` is true when the output does not contain "Already up to date"
+- **clone**: `had_changes` is true when the clone succeeds (already-cloned repos are detected before calling git)
+- **push**: `had_changes` is true when `git commit` succeeds (i.e. there was something to commit and push)
+
 For push, the steps run in sequence: add → commit → push. A failure at any step skips the remaining steps.
 If `git commit` exits with a non-zero code due to "nothing to commit", it is treated as a success
-and push is skipped — there is no point pushing when there are no changes.
-This is the only case where the decision is based on both the exit code and the output string.
+(`had_changes: false`) and push is skipped.
 
 ### Summary Output After TUI Exit
 
@@ -200,12 +205,12 @@ The format is suitable for pasting directly into a chat with an AI agent.
 
 **All succeeded:**
 ```
-gitpp pull: all 101 repositories succeeded.
+Total: 101 | Done: 101 (Updated: 3 / Unchanged: 98 / Failed: 0)
 ```
 
 **With failures:**
 ```
-gitpp pull: 98/101 succeeded, 3 failed
+Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3)
 
 --- freeza (/Users/kako-jun/repos/private/freeza) ---
   error: Your local changes to the following files would be overwritten by merge:

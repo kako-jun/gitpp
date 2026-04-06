@@ -429,7 +429,7 @@ fn spawn_clone_workers(
                     &repos_handle,
                     &repo_name,
                     RepoStatus::Updated,
-                    "Updated",
+                    "Cloned",
                     100,
                 );
             } else {
@@ -499,20 +499,20 @@ fn spawn_pull_workers(
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
-                if result.output.contains("Already up to date") {
+                if result.had_changes {
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
-                        RepoStatus::Unchanged,
-                        "Unchanged",
+                        RepoStatus::Updated,
+                        "Updated",
                         100,
                     );
                 } else {
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
-                        RepoStatus::Updated,
-                        "Updated",
+                        RepoStatus::Unchanged,
+                        "Unchanged",
                         100,
                     );
                 }
@@ -591,20 +591,20 @@ fn spawn_push_workers(
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
-                if result.output.contains("nothing to commit") {
+                if result.had_changes {
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
-                        RepoStatus::Unchanged,
-                        "Unchanged",
+                        RepoStatus::Updated,
+                        "Updated",
                         100,
                     );
                 } else {
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
-                        RepoStatus::Updated,
-                        "Updated",
+                        RepoStatus::Unchanged,
+                        "Unchanged",
                         100,
                     );
                 }

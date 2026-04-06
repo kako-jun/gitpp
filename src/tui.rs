@@ -114,7 +114,7 @@ impl TuiApp {
                             reported.insert(repo.name.clone());
                         }
                         RepoStatus::Unchanged => {
-                            eprintln!("[{}] {}... done", self.command, repo.name);
+                            eprintln!("[{}] {}... unchanged", self.command, repo.name);
                             reported.insert(repo.name.clone());
                         }
                         RepoStatus::Failed => {
