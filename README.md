@@ -37,7 +37,8 @@ not a global config file.
 ## Features
 
 - **Parallel clone/pull/push** with configurable concurrency (`jobs`, default 20)
-- **Full-screen TUI** (ratatui) with real-time per-repo progress bars and status icons
+- **7 subcommands beyond clone/pull/push** — status, diff, fetch, branch, switch, stash list, gc
+- **Full-screen TUI** (ratatui) with 5-state icons (Waiting/Running/Updated/Unchanged/Failed)
 - **Per-directory git config** — `user.name`, `pull.rebase`, and any other git config key,
   applied locally to every repo in the group
 - **Push opt-in** — push is disabled unless `comments.default` is explicitly set; clone/pull
@@ -46,6 +47,7 @@ not a global config file.
   assistant for diagnosis
 - **Interactive REPL** mode with tab completion and history
 - **Quiet mode** for scripts and CI (no TUI, summary to stdout)
+- **Pre-commit hook auto-retry** — retries once on hook failure
 - Single binary, zero runtime dependencies
 
 ## What it does
@@ -53,9 +55,16 @@ not a global config file.
 Put a `gitpp.yaml` in your repos directory, then:
 
 ```bash
-gitpp clone   # Clone all repos in parallel
-gitpp pull    # Pull all repos in parallel
-gitpp push    # Add, commit, push all repos in parallel
+gitpp clone        # Clone all repos in parallel
+gitpp pull         # Pull all repos in parallel
+gitpp push         # Add, commit, push all repos in parallel
+gitpp status       # Show uncommitted changes across all repos
+gitpp diff         # Show staged+unstaged diff stats
+gitpp fetch        # Fetch from remotes
+gitpp branch       # Show current branch (highlights non-default)
+gitpp switch       # Switch to default branch (Git 2.23+)
+gitpp stash list   # Detect forgotten stashes
+gitpp gc           # Garbage collection (-j recommended)
 ```
 
 A full-screen TUI shows real-time progress for every repository:
@@ -64,18 +73,19 @@ A full-screen TUI shows real-time progress for every repository:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
 │▸✓ freeza                           Done                     │
 │  [████████████████████████████████████████] 100%             │
-│ ⚙ sss                              Pulling...               │
+│ ▶ sss                              Pulling...               │
 │  [████████████████████░░░░░░░░░░░░░░░░░░░░]  50%            │
 │ ⏸ noun-gender                       Waiting...              │
 │  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 101 | Done: 50 | OK: 48 | Fail: 2                   │
+│ Total: 101 | Done: 50 (Updated: 48 / Unchanged: 0 / Failed: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -85,16 +95,17 @@ The detail pane is shown by default. Press Enter to toggle it off/on:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
 │   ✓ freeza         Done  100% │ remote: Enumerating objects:  │
-│▸⚙ sss           Pull..   50% │   12, done.                  │
+│▸▶ sss           Pull..   50% │   12, done.                  │
 │   ⏸ noun-gender   Wait..   0% │ Receiving objects:  60%      │
 │                                │   (7/12) 1.2 MiB            │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 101 | Done: 50 | OK: 48 | Fail: 2                   │
+│ Total: 101 | Done: 50 (Updated: 48 / Unchanged: 0 / Failed: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -188,6 +199,15 @@ gitpp pull              # Pull all enabled repos
 gitpp push -j 10        # Push with max 10 parallel jobs
 gitpp clone             # Clone (skips already-cloned repos)
 
+# Inspection subcommands (short aliases available)
+gitpp status            # or: gitpp st
+gitpp diff              # or: gitpp di
+gitpp fetch             # or: gitpp fe
+gitpp branch            # or: gitpp br
+gitpp switch            # or: gitpp sw  (Git 2.23+ required)
+gitpp stash list        # or: gitpp sl
+gitpp gc -j 4           # I/O heavy — limit parallelism
+
 # Use a config file from another location
 gitpp pull --config ~/shared/gitpp.yaml
 
@@ -196,6 +216,9 @@ gitpp clone -c /mnt/ssd/gitpp.yaml -r /mnt/ssd/repos
 
 # Quiet mode (no TUI — summary to stdout, progress to stderr)
 gitpp pull -q
+
+# Version
+gitpp --version         # or: gitpp -V
 
 # Interactive mode with tab completion
 gitpp
@@ -209,13 +232,15 @@ gitpp> exit
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate repos |
 | `g` / `G` | Jump to top / bottom |
+| `n` / `N` | Jump to next / previous error |
 | `Enter` | Toggle detail pane (shown by default) |
 | `h` / `l` / `←` / `→` | Scroll detail pane (3 lines at a time) |
-| `Esc` | Close detail pane (or exit browse mode) |
+| `y` | Copy selected repo's output to clipboard |
+| `Esc` | Close detail pane first; press again to exit |
 | `q` | Quit immediately |
 
-When all repos finish, gitpp waits 2 seconds. Press any key to enter browse mode and
-inspect results; or do nothing and it exits automatically.
+When all repos finish, gitpp waits 2 seconds (footer shows a hint). Press any key to
+enter browse mode and inspect results; or do nothing and it exits automatically.
 
 ### Clone duplicate detection
 

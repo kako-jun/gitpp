@@ -1,12 +1,12 @@
 # gitpp Overview
 
-Last updated: 2026-04-03
+Last updated: 2026-04-06
 
 ## What is gitpp?
 
 **gitpp** = git + personal + parallel.
 A tool for managing multiple Git repositories in parallel, driven by a single YAML configuration file.
-It exposes exactly three commands: clone, pull, and push.
+It exposes ten commands — all parallel-capable operations that benefit from running across many repos at once.
 
 Originally a Bash script (`gitp.sh`), rewritten in Rust.
 The main improvements are a visual progress display via TUI and distribution as a single binary.
@@ -21,9 +21,10 @@ The "pull everything first" workflow is solved by one YAML file and a single `gi
 
 ### Do One Thing
 
-gitpp does clone, pull, and push — nothing else.
-Branch management, merging, rebasing, and opening PRs are out of scope.
-Not "do anything", but "do exactly this".
+gitpp provides ten subcommands: clone, pull, push, status, diff, fetch, branch, switch, stash list, and gc.
+All share a single criterion for inclusion: they are git operations that benefit from parallel execution across many repositories.
+Branch management, merging, rebasing, and opening PRs are out of scope — they require per-repo judgment.
+Not "do anything", but "do exactly the things that scale across repos".
 
 ### YAML location is the repository root by default
 
@@ -48,7 +49,7 @@ Any git config key is supported — not just `user.name` / `user.email`, but als
 - Different YAML files can carry different configs, so identity naturally follows location
 - No "main" and "sub" identities — each location gets its own `gitpp.yaml` on equal footing
 
-Config is not a standalone command; it is applied implicitly on every clone, pull, and push.
+Config is not a standalone command; it is applied implicitly on every operation.
 
 ### Repository Classification via `group`
 
@@ -92,4 +93,4 @@ The CLI `-j N` / `--jobs N` flag overrides it at runtime — the same convention
 | gr | Node.js | - | Tag-based auto-discovery |
 | git-xargs | Go | - | Bulk script execution, auto PR creation |
 
-gitpp's differentiator: **Rust + ratatui TUI + single-purpose (clone/pull/push only) + concurrency control** — no competing tool combines all four.
+gitpp's differentiator: **Rust + ratatui TUI + single-purpose (parallel git operations only) + concurrency control** — no competing tool combines all four.
