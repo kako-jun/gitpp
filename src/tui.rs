@@ -404,7 +404,7 @@ impl TuiApp {
 
         // Header (2 lines)
         let header_line2 = Line::from(Span::styled(
-            "      Enter:detail  h/l:scroll  y:copy  Esc:close  q:quit",
+            "       Enter:detail  h/l:scroll  y:copy  Esc:close  q:quit",
             Style::default().fg(Color::Gray),
         ));
         let mut header_line1_spans = vec![
