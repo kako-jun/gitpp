@@ -19,9 +19,10 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RepoStatus {
-    Pending,
+    Waiting,
     Running,
-    Success,
+    Updated,
+    Unchanged,
     Failed,
 }
 
@@ -52,7 +53,7 @@ impl TuiApp {
             .map(|(name, path)| RepoProgress {
                 name,
                 path,
-                status: RepoStatus::Pending,
+                status: RepoStatus::Waiting,
                 message: "Waiting...".to_string(),
                 progress: 0,
                 output: String::new(),
@@ -89,7 +90,7 @@ impl TuiApp {
                 let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
                 let running: Vec<_> = repos
                     .iter()
-                    .filter(|r| r.status == RepoStatus::Pending || r.status == RepoStatus::Running)
+                    .filter(|r| r.status == RepoStatus::Waiting || r.status == RepoStatus::Running)
                     .collect();
                 if !running.is_empty() {
                     eprintln!("{} repositories still in progress:", running.len());
@@ -108,7 +109,11 @@ impl TuiApp {
                         continue;
                     }
                     match repo.status {
-                        RepoStatus::Success => {
+                        RepoStatus::Updated => {
+                            eprintln!("[{}] {}... updated", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
+                        RepoStatus::Unchanged => {
                             eprintln!("[{}] {}... done", self.command, repo.name);
                             reported.insert(repo.name.clone());
                         }
@@ -120,9 +125,12 @@ impl TuiApp {
                     }
                 }
 
-                let all_done = repos
-                    .iter()
-                    .all(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed);
+                let all_done = repos.iter().all(|r| {
+                    matches!(
+                        r.status,
+                        RepoStatus::Updated | RepoStatus::Unchanged | RepoStatus::Failed
+                    )
+                });
                 if all_done {
                     break;
                 }
@@ -166,9 +174,12 @@ impl TuiApp {
             terminal.draw(|f| self.ui(f))?;
 
             let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
-            let all_done = repos
-                .iter()
-                .all(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed);
+            let all_done = repos.iter().all(|r| {
+                matches!(
+                    r.status,
+                    RepoStatus::Updated | RepoStatus::Unchanged | RepoStatus::Failed
+                )
+            });
             drop(repos);
 
             if all_done {
@@ -268,9 +279,13 @@ impl TuiApp {
     fn print_summary(&self) {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let total = repos.len();
-        let success_count = repos
+        let updated_count = repos
             .iter()
-            .filter(|r| r.status == RepoStatus::Success)
+            .filter(|r| r.status == RepoStatus::Updated)
+            .count();
+        let unchanged_count = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
         let failed: Vec<_> = repos
             .iter()
@@ -278,20 +293,14 @@ impl TuiApp {
             .collect();
 
         if failed.is_empty() {
-            println!(
-                "gitpp {}: all {success_count} repositories succeeded.",
-                self.command
-            );
+            println!("Total: {total} | Updated: {updated_count} | Unchanged: {unchanged_count}");
             return;
         }
 
         // Plain text, no ANSI codes — clipboard-friendly
+        let failed_count = failed.len();
         println!(
-            "gitpp {}: {}/{} succeeded, {} failed\n",
-            self.command,
-            success_count,
-            total,
-            failed.len()
+            "Total: {total} | Updated: {updated_count} | Unchanged: {unchanged_count} | Failed: {failed_count}\n"
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
@@ -350,13 +359,13 @@ impl TuiApp {
         // Footer
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let total = repos.len();
-        let completed = repos
+        let updated = repos
             .iter()
-            .filter(|r| r.status == RepoStatus::Success || r.status == RepoStatus::Failed)
+            .filter(|r| r.status == RepoStatus::Updated)
             .count();
-        let success = repos
+        let unchanged = repos
             .iter()
-            .filter(|r| r.status == RepoStatus::Success)
+            .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
         let failed = repos
             .iter()
@@ -368,13 +377,16 @@ impl TuiApp {
             Span::styled("Total: ", Style::default().fg(Color::White)),
             Span::styled(format!("{total} "), Style::default().fg(Color::Cyan)),
             Span::raw("| "),
-            Span::styled("Done: ", Style::default().fg(Color::White)),
-            Span::styled(format!("{completed} "), Style::default().fg(Color::Yellow)),
+            Span::styled("Updated: ", Style::default().fg(Color::White)),
+            Span::styled(format!("{updated} "), Style::default().fg(Color::Green)),
             Span::raw("| "),
-            Span::styled("OK: ", Style::default().fg(Color::White)),
-            Span::styled(format!("{success} "), Style::default().fg(Color::Green)),
+            Span::styled("Unchanged: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{unchanged} "),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::raw("| "),
-            Span::styled("Fail: ", Style::default().fg(Color::White)),
+            Span::styled("Failed: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed} "), Style::default().fg(Color::Red)),
         ]))
         .block(Block::default().borders(Borders::ALL));
@@ -409,9 +421,10 @@ impl TuiApp {
         {
             let is_selected = i == self.selected;
             let (status_icon, status_color) = match repo.status {
-                RepoStatus::Pending => ("⏸", Color::DarkGray),
-                RepoStatus::Running => ("⚙", Color::Yellow),
-                RepoStatus::Success => ("✓", Color::Green),
+                RepoStatus::Waiting => ("⏸", Color::DarkGray),
+                RepoStatus::Running => ("▶", Color::Yellow),
+                RepoStatus::Updated => ("✓", Color::Green),
+                RepoStatus::Unchanged => ("─", Color::DarkGray),
                 RepoStatus::Failed => ("✗", Color::Red),
             };
 
@@ -462,10 +475,11 @@ impl TuiApp {
             lines.push(Line::from(Span::styled(
                 bar,
                 Style::default().fg(match repo.status {
-                    RepoStatus::Success => Color::Green,
+                    RepoStatus::Updated => Color::Green,
+                    RepoStatus::Unchanged => Color::DarkGray,
                     RepoStatus::Failed => Color::Red,
                     RepoStatus::Running => Color::Yellow,
-                    RepoStatus::Pending => Color::DarkGray,
+                    RepoStatus::Waiting => Color::DarkGray,
                 }),
             )));
         }
