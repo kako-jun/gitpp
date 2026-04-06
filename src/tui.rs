@@ -197,6 +197,7 @@ impl TuiApp {
                             KeyCode::Char('q') | KeyCode::Esc => break,
                             _ => {
                                 // User interacted, switch to browse mode
+                                self.auto_exit_hint = false;
                                 self.handle_key(key.code);
                                 self.browse_mode(terminal)?;
                                 break;
