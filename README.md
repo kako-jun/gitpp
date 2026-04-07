@@ -239,7 +239,7 @@ gitpp> exit
 | `Esc` | Close detail pane first; press again to exit |
 | `q` | Quit immediately |
 
-When all repos finish, gitpp waits 2 seconds (footer shows a hint). Press any key to
+When all repos finish, gitpp waits 3 seconds (footer shows a hint). Press any key to
 enter browse mode and inspect results; or do nothing and it exits automatically.
 
 ### Clone duplicate detection

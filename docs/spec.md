@@ -186,7 +186,7 @@ A fullscreen TUI built with ratatui and crossterm.
 ### Behavior After Completion
 
 When all repositories have finished processing:
-1. Wait for a keypress for **2 seconds**.
+1. Wait for a keypress for **3 seconds**.
 2. No input → exit automatically and print a summary to stdout.
 3. Any key pressed → enter browse mode (navigate results with j/k; quit with q or Esc).
 

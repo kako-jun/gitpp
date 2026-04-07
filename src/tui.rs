@@ -190,7 +190,7 @@ impl TuiApp {
 
             if all_done {
                 terminal.draw(|f| self.ui(f))?;
-                if event::poll(Duration::from_secs(2))? {
+                if event::poll(Duration::from_secs(3))? {
                     if let Event::Key(key) = event::read()? {
                         match key.code {
                             KeyCode::Char('q') | KeyCode::Esc => break,
@@ -422,9 +422,9 @@ impl TuiApp {
             ),
         ];
 
-        // Status message (auto-expires after 2 seconds) — appended to line 1
+        // Status message (auto-expires after 3 seconds) — appended to line 1
         let show_msg = match &self.status_message {
-            Some((msg, at)) if at.elapsed() < Duration::from_secs(2) => Some(msg.clone()),
+            Some((msg, at)) if at.elapsed() < Duration::from_secs(3) => Some(msg.clone()),
             Some(_) => None,
             None => None,
         };
@@ -497,7 +497,7 @@ impl TuiApp {
         let mut footer_lines = vec![stats_line];
         if self.auto_exit_hint {
             footer_lines.push(Line::from(Span::styled(
-                "Will auto-exit 2s after completion — press any key to browse",
+                "Will auto-exit 3s after completion — press any key to browse",
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
