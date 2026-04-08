@@ -152,7 +152,7 @@ A fullscreen TUI built with ratatui and crossterm.
 │  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 101 | Done: 50 | OK: 48 | Fail: 2                   │
+│ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -169,7 +169,7 @@ A fullscreen TUI built with ratatui and crossterm.
 │                                │   (7/12) 1.2 MiB            │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 101 | Done: 50 | OK: 48 | Fail: 2                   │
+│ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -238,12 +238,12 @@ The format is suitable for pasting directly into a chat with an AI agent.
 
 **All succeeded:**
 ```
-Total: 101 | Done: 101 (Updated: 3 / Unchanged: 98 / Failed: 0)
+Total: 101 | Done: 101 (Updated: 3 / Unchanged: 98 / Failed: 0 / Untracked: 0)
 ```
 
 **With failures:**
 ```
-Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3)
+Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3 / Untracked: 0)
 
 --- freeza (/Users/kako-jun/repos/private/freeza) ---
   error: Your local changes to the following files would be overwritten by merge:
@@ -255,6 +255,21 @@ Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3)
 
 For each failed repository, the name, full path, and git output are shown.
 For push failures, the combined output of all steps (add, commit, push) is included.
+
+### Untracked Repository Detection
+
+Before any command runs, gitpp scans `base_dir` for git repositories not listed in the YAML config.
+
+**Scan scope (2 levels):**
+1. Direct children of `base_dir` that contain `.git` — displayed as `(root)/name`
+2. Grandchildren of `base_dir` (i.e. `base_dir/group/repo`) that contain `.git` — displayed as `group/name`
+
+**Rules:**
+- Directories without `.git` are ignored (not git repos, outside gitpp's scope)
+- Disabled repos (`enabled: false`) are still considered YAML-defined (not Untracked)
+- Paths are canonicalized before comparison to handle symlinks
+- No git operations are performed on Untracked repos — they are display-only
+- Untracked repos appear with `?` icon in magenta, status "Not in gitpp.yaml", progress 100%
 
 ## Parallel Execution
 
