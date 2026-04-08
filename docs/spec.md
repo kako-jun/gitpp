@@ -265,6 +265,7 @@ Before any command runs, gitpp scans `base_dir` for git repositories not listed 
 2. Grandchildren of `base_dir` (i.e. `base_dir/group/repo`) that contain `.git` — displayed as `group/name`
 
 **Rules:**
+- Hidden directories (names starting with `.`) are skipped at both levels
 - Directories without `.git` are ignored (not git repos, outside gitpp's scope)
 - Disabled repos (`enabled: false`) are still considered YAML-defined (not Untracked)
 - Paths are canonicalized before comparison to handle symlinks

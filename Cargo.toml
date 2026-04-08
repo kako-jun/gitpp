@@ -27,6 +27,7 @@ arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
+tempfile = "3"
 
 [profile.release]
 lto = true
