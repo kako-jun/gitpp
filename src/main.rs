@@ -4,6 +4,7 @@ mod setting_util;
 mod tui;
 
 use git_controller::GitController;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -206,6 +207,107 @@ fn parse_jobs(args: &[String], default: usize) -> (usize, Vec<String>) {
     (jobs, filtered)
 }
 
+fn detect_untracked_repos(
+    base_dir: &Path,
+    all_repos: &[&setting_util::Repos],
+) -> Vec<(String, String)> {
+    // Build a set of canonical paths for all YAML-defined repos (including disabled ones)
+    let mut known_paths: HashSet<PathBuf> = HashSet::new();
+    for repo in all_repos {
+        let repo_name = extract_repo_name(&repo.remote);
+        let repo_path = base_dir.join(&repo.group).join(&repo_name);
+        if let Ok(canonical) = fs::canonicalize(&repo_path) {
+            known_paths.insert(canonical);
+        } else {
+            // Repo dir may not exist yet (not cloned); store the logical path
+            known_paths.insert(repo_path);
+        }
+    }
+
+    let base_canonical = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+
+    let mut untracked: Vec<(String, String)> = Vec::new();
+
+    let entries = match fs::read_dir(base_dir) {
+        Ok(e) => e,
+        Err(_) => return untracked,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Skip hidden directories (.git, .cache, .github, etc.)
+        if path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+        {
+            continue;
+        }
+
+        // Check if this direct child is a git repo
+        if path.join(".git").exists() {
+            let canonical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            // Skip base_dir itself (shouldn't happen since we're reading children)
+            if canonical == base_canonical {
+                continue;
+            }
+            if !known_paths.contains(&canonical) {
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let display_name = format!("(root)/{name}");
+                untracked.push((display_name, canonical.to_string_lossy().to_string()));
+            }
+            continue;
+        }
+
+        // Otherwise, scan one level deeper (group directories)
+        let sub_entries = match fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for sub_entry in sub_entries.flatten() {
+            let sub_path = sub_entry.path();
+            if !sub_path.is_dir() {
+                continue;
+            }
+            if sub_path
+                .file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+            {
+                continue;
+            }
+            if !sub_path.join(".git").exists() {
+                continue;
+            }
+            let canonical = fs::canonicalize(&sub_path).unwrap_or_else(|_| sub_path.clone());
+            if !known_paths.contains(&canonical) {
+                let group_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let repo_name = sub_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let display_name = format!("{group_name}/{repo_name}");
+                untracked.push((display_name, canonical.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    untracked.sort_by(|a, b| a.0.cmp(&b.0));
+    untracked
+}
+
 fn execute_command(
     setting: &setting_util::GitppSetting,
     args: &[String],
@@ -269,7 +371,17 @@ fn execute_command(
         }
     };
 
+    // Detect untracked repos (all YAML-defined repos, including disabled)
+    let all_repos: Vec<_> = setting.repos.iter().collect();
+    let untracked_repos = detect_untracked_repos(base_dir, &all_repos);
+
     let mut tui_app = TuiApp::new(repo_names, repo_paths, canonical_cmd);
+
+    // Add untracked repos to TUI
+    for (name, path) in &untracked_repos {
+        tui_app.add_untracked(name.clone(), path.clone());
+    }
+
     let repos_handle = tui_app.get_repos_handle();
     let semaphore = Arc::new(Semaphore::new(jobs));
 
@@ -821,4 +933,151 @@ fn extract_repo_name(remote_url: &str) -> String {
     let parts: Vec<&str> = url.split('/').collect();
     let last_part = parts.last().unwrap_or(&"");
     last_part.trim_end_matches(".git").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn make_repo(repos: &[(&str, &str, &str)]) -> Vec<setting_util::Repos> {
+        repos
+            .iter()
+            .map(|(remote, branch, group)| setting_util::Repos {
+                enabled: true,
+                remote: remote.to_string(),
+                branch: branch.to_string(),
+                group: group.to_string(),
+            })
+            .collect()
+    }
+
+    fn init_git_dir(path: &Path) {
+        fs::create_dir_all(path.join(".git")).unwrap();
+    }
+
+    #[test]
+    fn detect_group_level_untracked() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        // YAML-defined repo
+        let known = base.join("mygroup").join("known-repo");
+        init_git_dir(&known);
+
+        // Untracked repo in same group
+        let unknown = base.join("mygroup").join("stray-repo");
+        init_git_dir(&unknown);
+
+        let yaml_repos = make_repo(&[("git@github.com:user/known-repo.git", "main", "mygroup")]);
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "mygroup/stray-repo");
+    }
+
+    #[test]
+    fn detect_root_level_untracked() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        // Repo directly under base_dir (no group)
+        let root_repo = base.join("orphan");
+        init_git_dir(&root_repo);
+
+        let yaml_repos: Vec<setting_util::Repos> = vec![];
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].0, "(root)/orphan");
+    }
+
+    #[test]
+    fn known_repos_not_detected() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        let repo = base.join("grp").join("myrepo");
+        init_git_dir(&repo);
+
+        let yaml_repos = make_repo(&[("git@github.com:user/myrepo.git", "main", "grp")]);
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn disabled_repos_not_detected_as_untracked() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        let repo = base.join("grp").join("disabled-repo");
+        init_git_dir(&repo);
+
+        let mut yaml_repos = make_repo(&[("git@github.com:user/disabled-repo.git", "main", "grp")]);
+        yaml_repos[0].enabled = false;
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn hidden_directories_skipped() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        // Hidden dir at root level with .git
+        init_git_dir(&base.join(".hidden-repo"));
+
+        // Hidden dir inside group
+        let grp = base.join("grp");
+        init_git_dir(&grp.join(".secret"));
+
+        let yaml_repos: Vec<setting_util::Repos> = vec![];
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn dirs_without_git_ignored() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        // Directory without .git (not a repo)
+        fs::create_dir_all(base.join("grp").join("just-a-folder")).unwrap();
+        // File (not a directory)
+        fs::write(base.join("grp").join("readme.txt"), "hi").unwrap();
+
+        let yaml_repos: Vec<setting_util::Repos> = vec![];
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn results_sorted_alphabetically() {
+        let tmp = TempDir::new().unwrap();
+        let base = tmp.path();
+
+        init_git_dir(&base.join("z-group").join("repo-z"));
+        init_git_dir(&base.join("a-group").join("repo-a"));
+        init_git_dir(&base.join("alpha"));
+
+        let yaml_repos: Vec<setting_util::Repos> = vec![];
+        let refs: Vec<_> = yaml_repos.iter().collect();
+        let result = detect_untracked_repos(base, &refs);
+
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].0, "(root)/alpha");
+        assert_eq!(result[1].0, "a-group/repo-a");
+        assert_eq!(result[2].0, "z-group/repo-z");
+    }
 }
