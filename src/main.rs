@@ -67,6 +67,11 @@ fn main() {
         return;
     }
 
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        show_help();
+        return;
+    }
+
     let global_opts = parse_global_options(&args);
 
     let setting = match setting_util::load(global_opts.config_path.as_deref()) {
