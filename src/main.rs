@@ -4,6 +4,7 @@ mod setting_util;
 mod tui;
 
 use git_controller::GitController;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -206,6 +207,93 @@ fn parse_jobs(args: &[String], default: usize) -> (usize, Vec<String>) {
     (jobs, filtered)
 }
 
+fn detect_untracked_repos(
+    base_dir: &Path,
+    all_repos: &[&setting_util::Repos],
+) -> Vec<(String, String)> {
+    // Build a set of canonical paths for all YAML-defined repos (including disabled ones)
+    let mut known_paths: HashSet<PathBuf> = HashSet::new();
+    for repo in all_repos {
+        let repo_name = extract_repo_name(&repo.remote);
+        let repo_path = base_dir.join(&repo.group).join(&repo_name);
+        if let Ok(canonical) = fs::canonicalize(&repo_path) {
+            known_paths.insert(canonical);
+        } else {
+            // Repo dir may not exist yet (not cloned); store the logical path
+            known_paths.insert(repo_path);
+        }
+    }
+
+    let base_canonical = fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+
+    let mut untracked: Vec<(String, String)> = Vec::new();
+
+    let entries = match fs::read_dir(base_dir) {
+        Ok(e) => e,
+        Err(_) => return untracked,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        // Check if this direct child is a git repo
+        if path.join(".git").exists() {
+            let canonical = fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            // Skip base_dir itself (shouldn't happen since we're reading children)
+            if canonical == base_canonical {
+                continue;
+            }
+            if !known_paths.contains(&canonical) {
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let display_name = format!("(root)/{name}");
+                untracked.push((display_name, canonical.to_string_lossy().to_string()));
+            }
+            continue;
+        }
+
+        // Otherwise, scan one level deeper (group directories)
+        let sub_entries = match fs::read_dir(&path) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for sub_entry in sub_entries.flatten() {
+            let sub_path = sub_entry.path();
+            if !sub_path.is_dir() {
+                continue;
+            }
+            if !sub_path.join(".git").exists() {
+                continue;
+            }
+            let canonical = fs::canonicalize(&sub_path).unwrap_or_else(|_| sub_path.clone());
+            if !known_paths.contains(&canonical) {
+                let group_name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let repo_name = sub_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let display_name = format!("{group_name}/{repo_name}");
+                untracked.push((display_name, canonical.to_string_lossy().to_string()));
+            }
+        }
+    }
+
+    untracked.sort_by(|a, b| a.0.cmp(&b.0));
+    untracked
+}
+
 fn execute_command(
     setting: &setting_util::GitppSetting,
     args: &[String],
@@ -269,7 +357,17 @@ fn execute_command(
         }
     };
 
+    // Detect untracked repos (all YAML-defined repos, including disabled)
+    let all_repos: Vec<_> = setting.repos.iter().collect();
+    let untracked_repos = detect_untracked_repos(base_dir, &all_repos);
+
     let mut tui_app = TuiApp::new(repo_names, repo_paths, canonical_cmd);
+
+    // Add untracked repos to TUI
+    for (name, path) in &untracked_repos {
+        tui_app.add_untracked(name.clone(), path.clone());
+    }
+
     let repos_handle = tui_app.get_repos_handle();
     let semaphore = Arc::new(Semaphore::new(jobs));
 

@@ -24,6 +24,7 @@ pub enum RepoStatus {
     Updated,
     Unchanged,
     Failed,
+    Untracked,
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +81,18 @@ impl TuiApp {
         Arc::clone(&self.repos)
     }
 
+    pub fn add_untracked(&self, name: String, path: String) {
+        let mut repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
+        repos.push(RepoProgress {
+            name,
+            path,
+            status: RepoStatus::Untracked,
+            message: "Not in gitpp.yaml".to_string(),
+            progress: 100,
+            output: String::new(),
+        });
+    }
+
     pub fn run_quiet(&mut self, interrupted: Arc<AtomicBool>) -> Result<(), io::Error> {
         let mut reported: HashSet<String> = HashSet::new();
 
@@ -127,6 +140,10 @@ impl TuiApp {
                             eprintln!("[{}] {}... FAILED", self.command, repo.name);
                             reported.insert(repo.name.clone());
                         }
+                        RepoStatus::Untracked => {
+                            eprintln!("[{}] {}... untracked", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
                         _ => {}
                     }
                 }
@@ -134,7 +151,10 @@ impl TuiApp {
                 let all_done = repos.iter().all(|r| {
                     matches!(
                         r.status,
-                        RepoStatus::Updated | RepoStatus::Unchanged | RepoStatus::Failed
+                        RepoStatus::Updated
+                            | RepoStatus::Unchanged
+                            | RepoStatus::Failed
+                            | RepoStatus::Untracked
                     )
                 });
                 if all_done {
@@ -183,7 +203,10 @@ impl TuiApp {
             let all_done = repos.iter().all(|r| {
                 matches!(
                     r.status,
-                    RepoStatus::Updated | RepoStatus::Unchanged | RepoStatus::Failed
+                    RepoStatus::Updated
+                        | RepoStatus::Unchanged
+                        | RepoStatus::Failed
+                        | RepoStatus::Untracked
                 )
             });
             drop(repos);
@@ -365,18 +388,22 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
             .collect();
+        let untracked_count = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Untracked)
+            .count();
 
-        let done = updated_count + unchanged_count + failed.len();
+        let done = updated_count + unchanged_count + failed.len() + untracked_count;
 
         if failed.is_empty() {
-            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: 0)");
+            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: 0 / Untracked: {untracked_count})");
             return;
         }
 
         // Plain text, no ANSI codes — clipboard-friendly
         let failed_count = failed.len();
         println!(
-            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: {failed_count})\n"
+            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: {failed_count} / Untracked: {untracked_count})\n"
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
@@ -473,7 +500,11 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
             .count();
-        let done = updated + unchanged + failed;
+        let untracked = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Untracked)
+            .count();
+        let done = updated + unchanged + failed + untracked;
         drop(repos);
 
         let stats_line = Line::from(vec![
@@ -491,6 +522,9 @@ impl TuiApp {
             Span::raw(" / "),
             Span::styled("Failed: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed}"), Style::default().fg(Color::Red)),
+            Span::raw(" / "),
+            Span::styled("Untracked: ", Style::default().fg(Color::White)),
+            Span::styled(format!("{untracked}"), Style::default().fg(Color::Magenta)),
             Span::raw(")"),
         ]);
 
@@ -541,6 +575,7 @@ impl TuiApp {
                 RepoStatus::Updated => ("✓", Color::Green),
                 RepoStatus::Unchanged => ("─", Color::DarkGray),
                 RepoStatus::Failed => ("✗", Color::Red),
+                RepoStatus::Untracked => ("?", Color::Magenta),
             };
 
             let name_style = if is_selected {
@@ -595,6 +630,7 @@ impl TuiApp {
                     RepoStatus::Failed => Color::Red,
                     RepoStatus::Running => Color::Yellow,
                     RepoStatus::Waiting => Color::DarkGray,
+                    RepoStatus::Untracked => Color::Magenta,
                 }),
             )));
         }
