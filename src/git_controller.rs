@@ -184,6 +184,11 @@ impl GitController {
         }
     }
 
+    pub fn is_valid_repo(&self, dir: &Path) -> bool {
+        let result = self.exec_git(dir, &["rev-parse", "HEAD"]);
+        result.success
+    }
+
     pub fn git_remote_url(&self, dir: &Path) -> String {
         let result = self.exec_git(dir, &["remote", "get-url", "origin"]);
         result.output.trim().to_string()
