@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -213,30 +213,26 @@ impl TuiApp {
 
             if all_done {
                 terminal.draw(|f| self.ui(f))?;
-                if event::poll(Duration::from_secs(3))? {
-                    if let Event::Key(key) = event::read()? {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => break,
-                            _ => {
-                                // User interacted, switch to browse mode
-                                self.auto_exit_hint = false;
-                                self.handle_key(key.code);
-                                self.browse_mode(terminal)?;
-                                break;
-                            }
+                if let Some(code) = Self::poll_key_press(Duration::from_secs(3))? {
+                    match code {
+                        KeyCode::Char('q') | KeyCode::Esc => break,
+                        _ => {
+                            // User interacted, switch to browse mode
+                            self.auto_exit_hint = false;
+                            self.handle_key(code);
+                            self.browse_mode(terminal)?;
+                            break;
                         }
                     }
                 }
                 break;
             }
 
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Esc if !self.show_detail => break,
-                        _ => self.handle_key(key.code),
-                    }
+            if let Some(code) = Self::poll_key_press(Duration::from_millis(100))? {
+                match code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Esc if !self.show_detail => break,
+                    _ => self.handle_key(code),
                 }
             }
         }
@@ -248,17 +244,28 @@ impl TuiApp {
         loop {
             terminal.draw(|f| self.ui(f))?;
 
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Esc if !self.show_detail => break,
-                        _ => self.handle_key(key.code),
-                    }
+            if let Some(code) = Self::poll_key_press(Duration::from_millis(100))? {
+                match code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Esc if !self.show_detail => break,
+                    _ => self.handle_key(code),
                 }
             }
         }
         Ok(())
+    }
+
+    /// Poll for a key press/repeat event, ignoring release events.
+    /// Returns `Some(KeyCode)` on press/repeat, `None` on timeout or non-key event.
+    fn poll_key_press(timeout: Duration) -> io::Result<Option<KeyCode>> {
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
+                    return Ok(Some(key.code));
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn handle_key(&mut self, key: KeyCode) {
