@@ -227,8 +227,9 @@ gitpp clone -c /mnt/ssd/gitpp.yaml -r /mnt/ssd/repos
 # クワイエットモード（TUIなし — サマリーは stdout、進捗は stderr）
 gitpp pull -q
 
-# バージョン確認
-gitpp --version
+# ヘルプ / バージョン確認
+gitpp --help            # or: gitpp -h
+gitpp --version         # or: gitpp -V
 
 # インタラクティブモード（タブ補完付き）
 gitpp
