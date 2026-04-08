@@ -221,7 +221,8 @@ gitpp clone -c /mnt/ssd/gitpp.yaml -r /mnt/ssd/repos
 # Quiet mode (no TUI — summary to stdout, progress to stderr)
 gitpp pull -q
 
-# Version
+# Help / Version
+gitpp --help            # or: gitpp -h
 gitpp --version         # or: gitpp -V
 
 # Interactive mode with tab completion

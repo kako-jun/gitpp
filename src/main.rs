@@ -67,6 +67,11 @@ fn main() {
         return;
     }
 
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        show_help();
+        return;
+    }
+
     let global_opts = parse_global_options(&args);
 
     let setting = match setting_util::load(global_opts.config_path.as_deref()) {
@@ -536,7 +541,10 @@ fn show_help() {
     println!(
         "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout"
     );
-    println!("  \x1b[1;33m-V\x1b[0m, \x1b[1;33m--version\x1b[0m            Show version\n");
+    println!("  \x1b[1;33m-V\x1b[0m, \x1b[1;33m--version\x1b[0m            Show version");
+    println!(
+        "  \x1b[1;33m-h\x1b[0m, \x1b[1;33m--help\x1b[0m               Show this help message\n"
+    );
     println!("\x1b[1;36mShortcuts:\x1b[0m");
     println!("  clo, cl  → clone      st → status");
     println!("  pul, pl  → pull       di → diff");
