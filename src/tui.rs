@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -215,14 +215,16 @@ impl TuiApp {
                 terminal.draw(|f| self.ui(f))?;
                 if event::poll(Duration::from_secs(3))? {
                     if let Event::Key(key) = event::read()? {
-                        match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => break,
-                            _ => {
-                                // User interacted, switch to browse mode
-                                self.auto_exit_hint = false;
-                                self.handle_key(key.code);
-                                self.browse_mode(terminal)?;
-                                break;
+                        if key.kind == KeyEventKind::Press {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => break,
+                                _ => {
+                                    // User interacted, switch to browse mode
+                                    self.auto_exit_hint = false;
+                                    self.handle_key(key.code);
+                                    self.browse_mode(terminal)?;
+                                    break;
+                                }
                             }
                         }
                     }
@@ -232,10 +234,12 @@ impl TuiApp {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Esc if !self.show_detail => break,
-                        _ => self.handle_key(key.code),
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Esc if !self.show_detail => break,
+                            _ => self.handle_key(key.code),
+                        }
                     }
                 }
             }
@@ -250,10 +254,12 @@ impl TuiApp {
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
-                    match key.code {
-                        KeyCode::Char('q') => break,
-                        KeyCode::Esc if !self.show_detail => break,
-                        _ => self.handle_key(key.code),
+                    if key.kind == KeyEventKind::Press {
+                        match key.code {
+                            KeyCode::Char('q') => break,
+                            KeyCode::Esc if !self.show_detail => break,
+                            _ => self.handle_key(key.code),
+                        }
                     }
                 }
             }
