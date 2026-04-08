@@ -70,8 +70,12 @@ If the target directory already contains a `.git` folder, gitpp fetches the actu
 | Situation | Result |
 |---|---|
 | No `.git` present | Proceed with normal clone |
-| `.git` exists, remote matches | Display "Already cloned" (Unchanged). Apply config only. |
-| `.git` exists, remote mismatch | Display "Remote mismatch" (Failed). Print expected vs actual remote. |
+| `.git` exists, valid repo, remote matches | Display "Already cloned" (Unchanged). Apply config only. |
+| `.git` exists, valid repo, remote mismatch | Display "Remote mismatch" (Failed). Print expected vs actual remote. |
+| `.git` exists, invalid repo (incomplete clone) | Remove directory and re-clone |
+
+A repo is considered valid when `git rev-parse HEAD` succeeds (i.e., at least one commit exists).
+For non-clone commands (pull, push, etc.), an invalid repo results in "Incomplete clone. Run `gitpp clone` to fix" (Failed).
 
 ## Operating Modes
 
