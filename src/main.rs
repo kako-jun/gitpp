@@ -587,25 +587,7 @@ fn spawn_pull_workers(
             let git = GitController::new();
             let repo_dir = base.join(&repo_data.group).join(&repo_name);
 
-            if !repo_dir.exists() {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Directory not found: {}", repo_dir.display()),
-                    100,
-                );
-                return;
-            }
-
-            if !git.is_valid_repo(&repo_dir) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    "Incomplete clone. Run `gitpp clone` to fix",
-                    100,
-                );
+            if !check_repo_ready(&git, &repo_dir, &repos_handle, &repo_name) {
                 return;
             }
 
@@ -689,25 +671,7 @@ fn spawn_push_workers(
             let git = GitController::new();
             let repo_dir = base.join(&repo_data.group).join(&repo_name);
 
-            if !repo_dir.exists() {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Directory not found: {}", repo_dir.display()),
-                    100,
-                );
-                return;
-            }
-
-            if !git.is_valid_repo(&repo_dir) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    "Incomplete clone. Run `gitpp clone` to fix",
-                    100,
-                );
+            if !check_repo_ready(&git, &repo_dir, &repos_handle, &repo_name) {
                 return;
             }
 
@@ -786,25 +750,7 @@ fn spawn_generic_workers(
             let git = GitController::new();
             let repo_dir = base.join(&repo_data.group).join(&repo_name);
 
-            if !repo_dir.exists() {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    &format!("Directory not found: {}", repo_dir.display()),
-                    100,
-                );
-                return;
-            }
-
-            if !git.is_valid_repo(&repo_dir) {
-                update_repo_status(
-                    &repos_handle,
-                    &repo_name,
-                    RepoStatus::Failed,
-                    "Incomplete clone. Run `gitpp clone` to fix",
-                    100,
-                );
+            if !check_repo_ready(&git, &repo_dir, &repos_handle, &repo_name) {
                 return;
             }
 
@@ -835,6 +781,39 @@ fn spawn_generic_workers(
             }
         });
     }
+}
+
+/// Check that a repo directory exists and is a valid git repository.
+/// Returns `true` if ready, or `false` after reporting the error via `update_repo_status`.
+fn check_repo_ready(
+    git: &GitController,
+    repo_dir: &Path,
+    repos_handle: &Arc<Mutex<Vec<tui::RepoProgress>>>,
+    repo_name: &str,
+) -> bool {
+    if !repo_dir.exists() {
+        update_repo_status(
+            repos_handle,
+            repo_name,
+            RepoStatus::Failed,
+            &format!("Directory not found: {}", repo_dir.display()),
+            100,
+        );
+        return false;
+    }
+
+    if !git.is_valid_repo(repo_dir) {
+        update_repo_status(
+            repos_handle,
+            repo_name,
+            RepoStatus::Failed,
+            "Incomplete clone. Run `gitpp clone` to fix",
+            100,
+        );
+        return false;
+    }
+
+    true
 }
 
 fn extract_repo_name(remote_url: &str) -> String {
