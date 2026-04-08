@@ -423,7 +423,7 @@ dependencies = [
 
 [[package]]
 name = "gitpp"
-version = "0.6.5"
+version = "0.7.0"
 dependencies = [
  "arboard",
  "cargo-husky",
@@ -435,6 +435,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_yaml",
+ "tempfile",
 ]
 
 [[package]]
