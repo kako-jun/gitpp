@@ -509,7 +509,16 @@ fn spawn_clone_workers(
                     return;
                 }
                 // Incomplete clone detected — remove and re-clone
-                let _ = std::fs::remove_dir_all(&repo_dir);
+                if let Err(e) = std::fs::remove_dir_all(&repo_dir) {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Failed,
+                        &format!("Failed to remove incomplete clone: {e}"),
+                        100,
+                    );
+                    return;
+                }
             }
 
             update_repo_status(

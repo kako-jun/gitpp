@@ -74,7 +74,8 @@ If the target directory already contains a `.git` folder, gitpp fetches the actu
 | `.git` exists, valid repo, remote mismatch | Display "Remote mismatch" (Failed). Print expected vs actual remote. |
 | `.git` exists, invalid repo (incomplete clone) | Remove directory and re-clone |
 
-A repo is considered valid when `git rev-parse HEAD` succeeds (i.e., at least one commit exists).
+A repo is considered valid when `git rev-parse HEAD` succeeds (e.g., at least one commit exists).
+Note: an empty repository with zero commits will be treated as invalid and re-cloned.
 For non-clone commands (pull, push, etc.), an invalid repo results in "Incomplete clone. Run `gitpp clone` to fix" (Failed).
 
 ## Operating Modes
