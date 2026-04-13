@@ -178,6 +178,12 @@ impl TuiApp {
 
         let res = self.run_app(&mut terminal);
 
+        // Drain pending terminal events so stray SGR mouse bytes
+        // don't leak into the shell prompt after TUI exit.
+        while event::poll(Duration::ZERO).unwrap_or(false) {
+            let _ = event::read();
+        }
+
         disable_raw_mode()?;
         execute!(
             terminal.backend_mut(),
