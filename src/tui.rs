@@ -178,9 +178,9 @@ impl TuiApp {
 
         let res = self.run_app(&mut terminal);
 
-        // Drain pending mouse/resize events so stray SGR bytes
+        // Drain pending terminal events so stray SGR mouse bytes
         // don't leak into the shell prompt after TUI exit.
-        while event::poll(Duration::from_millis(0))? {
+        while event::poll(Duration::ZERO).unwrap_or(false) {
             let _ = event::read();
         }
 
