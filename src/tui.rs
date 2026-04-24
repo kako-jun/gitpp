@@ -12,7 +12,7 @@ use ratatui::{
     Frame, Terminal,
 };
 use std::collections::HashSet;
-use std::io;
+use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -178,18 +178,18 @@ impl TuiApp {
 
         let res = self.run_app(&mut terminal);
 
-        // Drain pending terminal events so stray SGR mouse bytes
-        // don't leak into the shell prompt after TUI exit.
-        while event::poll(Duration::ZERO).unwrap_or(false) {
-            let _ = event::read();
-        }
-
-        disable_raw_mode()?;
+        // Drain once before teardown, then disable mouse capture before
+        // returning control to the shell and drain again. Some terminals
+        // can enqueue one last SGR mouse report during shutdown.
+        Self::drain_pending_events();
         execute!(
             terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
+            DisableMouseCapture,
+            LeaveAlternateScreen
         )?;
+        Write::flush(terminal.backend_mut())?;
+        Self::drain_pending_events();
+        disable_raw_mode()?;
         terminal.show_cursor()?;
 
         if let Err(err) = res {
@@ -199,6 +199,12 @@ impl TuiApp {
         self.print_summary();
 
         Ok(())
+    }
+
+    fn drain_pending_events() {
+        while event::poll(Duration::ZERO).unwrap_or(false) {
+            let _ = event::read();
+        }
     }
 
     fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
