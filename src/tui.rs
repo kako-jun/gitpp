@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -172,21 +172,16 @@ impl TuiApp {
     pub fn run(&mut self) -> Result<(), io::Error> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
         let res = self.run_app(&mut terminal);
 
-        // Drain once before teardown, then disable mouse capture before
-        // returning control to the shell and drain again. Some terminals
-        // can enqueue one last SGR mouse report during shutdown.
+        // Drain once before teardown, then return control to the shell and
+        // drain again to drop any last queued events near the exit boundary.
         Self::drain_pending_events();
-        execute!(
-            terminal.backend_mut(),
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        )?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         Write::flush(terminal.backend_mut())?;
         Self::drain_pending_events();
         disable_raw_mode()?;

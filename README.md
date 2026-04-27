@@ -45,7 +45,7 @@ not a global config file.
   work without it
 - **AI-friendly summary** — plain-text output after completion, paste directly to your AI
   assistant for diagnosis
-- **Clean terminal teardown** — avoids stray mouse-report bytes leaking into the shell prompt
+- **Clean terminal teardown** — exits without enabling terminal mouse capture, avoiding stray mouse-report bytes in the shell prompt
 - **Interactive REPL** mode with tab completion and history
 - **Quiet mode** for scripts and CI (no TUI, summary to stdout)
 - **Pre-commit hook auto-retry** — retries once on hook failure
