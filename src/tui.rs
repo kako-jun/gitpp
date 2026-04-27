@@ -345,11 +345,7 @@ impl TuiApp {
     fn copy_detail_to_clipboard(&mut self) {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let text = if let Some(repo) = repos.get(self.selected) {
-            if repo.output.is_empty() {
-                repo.message.clone()
-            } else {
-                repo.output.clone()
-            }
+            Self::detail_text(repo)
         } else {
             return;
         };
@@ -434,17 +430,21 @@ impl TuiApp {
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
-            if repo.output.is_empty() {
-                let message = Self::sanitize_summary_text(&repo.message);
-                println!("  {message}");
-            } else {
-                let output = Self::sanitize_summary_text(&repo.output);
-                for line in output.lines() {
-                    println!("  {line}");
-                }
+            let output = Self::detail_text(repo);
+            for line in output.lines() {
+                println!("  {line}");
             }
             println!();
         }
+    }
+
+    fn detail_text(repo: &RepoProgress) -> String {
+        let raw = if repo.output.is_empty() {
+            repo.message.as_str()
+        } else {
+            repo.output.as_str()
+        };
+        Self::sanitize_summary_text(raw)
     }
 
     fn sanitize_summary_text(text: &str) -> String {
@@ -459,15 +459,29 @@ impl TuiApp {
 
         let mut state = State::Text;
         let mut out = String::with_capacity(text.len());
+        let mut pending_cr = false;
 
         for ch in text.chars() {
+            if pending_cr {
+                if ch == '\n' {
+                    out.push('\n');
+                    pending_cr = false;
+                    continue;
+                }
+                out.push('\n');
+                pending_cr = false;
+            }
+
             state = match state {
                 State::Text => {
                     if ch == '\u{1b}' {
                         State::Escape
                     } else {
-                        if !ch.is_control() || matches!(ch, '\n' | '\r' | '\t') {
-                            out.push(ch);
+                        match ch {
+                            '\r' => pending_cr = true,
+                            '\n' | '\t' => out.push(ch),
+                            _ if !ch.is_control() => out.push(ch),
+                            _ => {}
                         }
                         State::Text
                     }
@@ -475,7 +489,12 @@ impl TuiApp {
                 State::Escape => match ch {
                     '[' => State::Csi,
                     ']' => State::Osc,
-                    _ => State::Text,
+                    _ => {
+                        if !ch.is_control() || matches!(ch, '\n' | '\t') {
+                            out.push(ch);
+                        }
+                        State::Text
+                    }
                 },
                 State::Csi => {
                     if ('@'..='~').contains(&ch) {
@@ -495,6 +514,10 @@ impl TuiApp {
                     _ => State::Osc,
                 },
             };
+        }
+
+        if pending_cr {
+            out.push('\n');
         }
 
         out
@@ -742,11 +765,7 @@ impl TuiApp {
     fn detail_line_count(&self) -> usize {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(repo) = repos.get(self.selected) {
-            let text = if repo.output.is_empty() {
-                &repo.message
-            } else {
-                &repo.output
-            };
+            let text = Self::detail_text(repo);
             text.lines().count()
         } else {
             0
@@ -758,11 +777,7 @@ impl TuiApp {
 
         let (title, content) = if let Some(repo) = repos.get(self.selected) {
             let title = format!(" {} ", repo.name);
-            let text = if repo.output.is_empty() {
-                repo.message.clone()
-            } else {
-                repo.output.clone()
-            };
+            let text = Self::detail_text(repo);
             (title, text)
         } else {
             (
@@ -831,6 +846,21 @@ mod tests {
     #[test]
     fn sanitize_summary_text_keeps_whitespace_but_drops_other_controls() {
         let text = "line 1\u{8}\n\tline 2\r\n";
-        assert_eq!(TuiApp::sanitize_summary_text(text), "line 1\n\tline 2\r\n");
+        assert_eq!(TuiApp::sanitize_summary_text(text), "line 1\n\tline 2\n");
+    }
+
+    #[test]
+    fn sanitize_summary_text_normalizes_bare_carriage_returns() {
+        let text = "step 1\rstep 2\rstep 3";
+        assert_eq!(
+            TuiApp::sanitize_summary_text(text),
+            "step 1\nstep 2\nstep 3"
+        );
+    }
+
+    #[test]
+    fn sanitize_summary_text_keeps_plain_text_after_unknown_escape() {
+        let text = "before\x1bXafter";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "beforeXafter");
     }
 }
