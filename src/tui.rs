@@ -1,5 +1,5 @@
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -172,21 +172,16 @@ impl TuiApp {
     pub fn run(&mut self) -> Result<(), io::Error> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
         let res = self.run_app(&mut terminal);
 
-        // Drain once before teardown, then disable mouse capture before
-        // returning control to the shell and drain again. Some terminals
-        // can enqueue one last SGR mouse report during shutdown.
+        // Drain once before teardown, then return control to the shell and
+        // drain again to drop any last queued events near the exit boundary.
         Self::drain_pending_events();
-        execute!(
-            terminal.backend_mut(),
-            DisableMouseCapture,
-            LeaveAlternateScreen
-        )?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
         Write::flush(terminal.backend_mut())?;
         Self::drain_pending_events();
         disable_raw_mode()?;
@@ -197,12 +192,25 @@ impl TuiApp {
         }
 
         self.print_summary();
+        io::stdout().flush()?;
+        Self::drain_pending_events_for(Duration::from_millis(25));
 
         Ok(())
     }
 
     fn drain_pending_events() {
         while event::poll(Duration::ZERO).unwrap_or(false) {
+            let _ = event::read();
+        }
+    }
+
+    fn drain_pending_events_for(timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if !event::poll(remaining.min(Duration::from_millis(5))).unwrap_or(false) {
+                break;
+            }
             let _ = event::read();
         }
     }
@@ -337,11 +345,7 @@ impl TuiApp {
     fn copy_detail_to_clipboard(&mut self) {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         let text = if let Some(repo) = repos.get(self.selected) {
-            if repo.output.is_empty() {
-                repo.message.clone()
-            } else {
-                repo.output.clone()
-            }
+            Self::detail_text(repo)
         } else {
             return;
         };
@@ -426,15 +430,97 @@ impl TuiApp {
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
-            if repo.output.is_empty() {
-                println!("  {}", repo.message);
-            } else {
-                for line in repo.output.lines() {
-                    println!("  {line}");
-                }
+            let output = Self::detail_text(repo);
+            for line in output.lines() {
+                println!("  {line}");
             }
             println!();
         }
+    }
+
+    fn detail_text(repo: &RepoProgress) -> String {
+        let raw = if repo.output.is_empty() {
+            repo.message.as_str()
+        } else {
+            repo.output.as_str()
+        };
+        Self::sanitize_summary_text(raw)
+    }
+
+    fn sanitize_summary_text(text: &str) -> String {
+        #[derive(Clone, Copy)]
+        enum State {
+            Text,
+            Escape,
+            Csi,
+            Osc,
+            OscEscape,
+        }
+
+        let mut state = State::Text;
+        let mut out = String::with_capacity(text.len());
+        let mut pending_cr = false;
+
+        for ch in text.chars() {
+            if pending_cr {
+                if ch == '\n' {
+                    out.push('\n');
+                    pending_cr = false;
+                    continue;
+                }
+                out.push('\n');
+                pending_cr = false;
+            }
+
+            state = match state {
+                State::Text => {
+                    if ch == '\u{1b}' {
+                        State::Escape
+                    } else {
+                        match ch {
+                            '\r' => pending_cr = true,
+                            '\n' | '\t' => out.push(ch),
+                            _ if !ch.is_control() => out.push(ch),
+                            _ => {}
+                        }
+                        State::Text
+                    }
+                }
+                State::Escape => match ch {
+                    '[' => State::Csi,
+                    ']' => State::Osc,
+                    _ => {
+                        if !ch.is_control() || matches!(ch, '\n' | '\t') {
+                            out.push(ch);
+                        }
+                        State::Text
+                    }
+                },
+                State::Csi => {
+                    if ('@'..='~').contains(&ch) {
+                        State::Text
+                    } else {
+                        State::Csi
+                    }
+                }
+                State::Osc => match ch {
+                    '\u{7}' => State::Text,
+                    '\u{1b}' => State::OscEscape,
+                    _ => State::Osc,
+                },
+                State::OscEscape => match ch {
+                    '\\' => State::Text,
+                    '\u{1b}' => State::OscEscape,
+                    _ => State::Osc,
+                },
+            };
+        }
+
+        if pending_cr {
+            out.push('\n');
+        }
+
+        out
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -679,11 +765,7 @@ impl TuiApp {
     fn detail_line_count(&self) -> usize {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(repo) = repos.get(self.selected) {
-            let text = if repo.output.is_empty() {
-                &repo.message
-            } else {
-                &repo.output
-            };
+            let text = Self::detail_text(repo);
             text.lines().count()
         } else {
             0
@@ -695,11 +777,7 @@ impl TuiApp {
 
         let (title, content) = if let Some(repo) = repos.get(self.selected) {
             let title = format!(" {} ", repo.name);
-            let text = if repo.output.is_empty() {
-                repo.message.clone()
-            } else {
-                repo.output.clone()
-            };
+            let text = Self::detail_text(repo);
             (title, text)
         } else {
             (
@@ -746,5 +824,43 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
             repo.output.push('\n');
         }
         repo.output.push_str(output);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TuiApp;
+
+    #[test]
+    fn sanitize_summary_text_removes_ansi_sequences() {
+        let text = "fatal:\x1b[31m boom\x1b[0m\n";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "fatal: boom\n");
+    }
+
+    #[test]
+    fn sanitize_summary_text_removes_osc_sequences() {
+        let text = "before\x1b]8;;https://example.com\x07link\x1b]8;;\x07after";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "beforelinkafter");
+    }
+
+    #[test]
+    fn sanitize_summary_text_keeps_whitespace_but_drops_other_controls() {
+        let text = "line 1\u{8}\n\tline 2\r\n";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "line 1\n\tline 2\n");
+    }
+
+    #[test]
+    fn sanitize_summary_text_normalizes_bare_carriage_returns() {
+        let text = "step 1\rstep 2\rstep 3";
+        assert_eq!(
+            TuiApp::sanitize_summary_text(text),
+            "step 1\nstep 2\nstep 3"
+        );
+    }
+
+    #[test]
+    fn sanitize_summary_text_keeps_plain_text_after_unknown_escape() {
+        let text = "before\x1bXafter";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "beforeXafter");
     }
 }

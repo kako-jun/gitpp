@@ -134,9 +134,9 @@ The repository name is derived automatically from the trailing path segment of t
 ## TUI
 
 A fullscreen TUI built with ratatui and crossterm.
-On exit, gitpp drains pending terminal events and disables mouse capture before
-returning control to the shell, reducing the chance of stray SGR mouse-report
-bytes appearing at the prompt.
+gitpp does not enable terminal mouse capture.
+On exit, it drains pending terminal events before returning control to the shell,
+reducing the chance of stray input bytes appearing at the prompt.
 
 ### Layout
 
