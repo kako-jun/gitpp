@@ -197,12 +197,25 @@ impl TuiApp {
         }
 
         self.print_summary();
+        io::stdout().flush()?;
+        Self::drain_pending_events_for(Duration::from_millis(25));
 
         Ok(())
     }
 
     fn drain_pending_events() {
         while event::poll(Duration::ZERO).unwrap_or(false) {
+            let _ = event::read();
+        }
+    }
+
+    fn drain_pending_events_for(timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if !event::poll(remaining.min(Duration::from_millis(5))).unwrap_or(false) {
+                break;
+            }
             let _ = event::read();
         }
     }
@@ -427,14 +440,69 @@ impl TuiApp {
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
             if repo.output.is_empty() {
-                println!("  {}", repo.message);
+                let message = Self::sanitize_summary_text(&repo.message);
+                println!("  {message}");
             } else {
-                for line in repo.output.lines() {
+                let output = Self::sanitize_summary_text(&repo.output);
+                for line in output.lines() {
                     println!("  {line}");
                 }
             }
             println!();
         }
+    }
+
+    fn sanitize_summary_text(text: &str) -> String {
+        #[derive(Clone, Copy)]
+        enum State {
+            Text,
+            Escape,
+            Csi,
+            Osc,
+            OscEscape,
+        }
+
+        let mut state = State::Text;
+        let mut out = String::with_capacity(text.len());
+
+        for ch in text.chars() {
+            state = match state {
+                State::Text => {
+                    if ch == '\u{1b}' {
+                        State::Escape
+                    } else {
+                        if !ch.is_control() || matches!(ch, '\n' | '\r' | '\t') {
+                            out.push(ch);
+                        }
+                        State::Text
+                    }
+                }
+                State::Escape => match ch {
+                    '[' => State::Csi,
+                    ']' => State::Osc,
+                    _ => State::Text,
+                },
+                State::Csi => {
+                    if ('@'..='~').contains(&ch) {
+                        State::Text
+                    } else {
+                        State::Csi
+                    }
+                }
+                State::Osc => match ch {
+                    '\u{7}' => State::Text,
+                    '\u{1b}' => State::OscEscape,
+                    _ => State::Osc,
+                },
+                State::OscEscape => match ch {
+                    '\\' => State::Text,
+                    '\u{1b}' => State::OscEscape,
+                    _ => State::Osc,
+                },
+            };
+        }
+
+        out
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -746,5 +814,28 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
             repo.output.push('\n');
         }
         repo.output.push_str(output);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TuiApp;
+
+    #[test]
+    fn sanitize_summary_text_removes_ansi_sequences() {
+        let text = "fatal:\x1b[31m boom\x1b[0m\n";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "fatal: boom\n");
+    }
+
+    #[test]
+    fn sanitize_summary_text_removes_osc_sequences() {
+        let text = "before\x1b]8;;https://example.com\x07link\x1b]8;;\x07after";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "beforelinkafter");
+    }
+
+    #[test]
+    fn sanitize_summary_text_keeps_whitespace_but_drops_other_controls() {
+        let text = "line 1\u{8}\n\tline 2\r\n";
+        assert_eq!(TuiApp::sanitize_summary_text(text), "line 1\n\tline 2\r\n");
     }
 }
