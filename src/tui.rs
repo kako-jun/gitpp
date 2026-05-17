@@ -3,6 +3,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use jiwa::{RevealHandle, RevealOpts, Rgb};
 use ratatui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
@@ -11,7 +12,6 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
-use jiwa::{RevealHandle, RevealOpts, Rgb};
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
