@@ -11,7 +11,8 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
-use std::collections::HashSet;
+use jiwa::{RevealHandle, RevealOpts, Rgb};
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -47,6 +48,11 @@ pub struct TuiApp {
     status_message: Option<(String, Instant)>,
     clipboard: Option<arboard::Clipboard>,
     auto_exit_hint: bool,
+    /// repo path → 完了瞬間に名前を bloom させる reveal。リポが Waiting/Running から
+    /// 終端ステータス (Updated/Unchanged/Failed/Untracked) に変わった最初の描画で
+    /// lazy-insert し、~200 ms で fade_to に到達したらそのまま残す (再走時は上書き)。
+    /// 並列ジョブの「終わった！」が視線で拾えるようにするための演出。
+    name_reveals: HashMap<String, RevealHandle>,
 }
 
 impl TuiApp {
@@ -74,7 +80,38 @@ impl TuiApp {
             status_message: None,
             clipboard: arboard::Clipboard::new().ok(),
             auto_exit_hint: true,
+            name_reveals: HashMap::new(),
         }
+    }
+
+    /// リポ名の表示形式。リスト幅の整合を取るための truncate + pad は bloom 経路と
+    /// 通常経路の両方で同じロジックを使う。元コードの byte-length truncate は非 ASCII
+    /// 名に対しては不正確だが、現状の挙動を変えないよう同じまま再現している。
+    fn format_repo_name(name: &str) -> String {
+        if name.len() > 36 {
+            format!("{}…", &name[..35])
+        } else {
+            format!("{:36}", name)
+        }
+    }
+
+    /// 完了 bloom 用 reveal の色。Updated は green、Failed は red、Unchanged/Untracked は
+    /// それぞれの状態色へ。fade_from はその色の暗いシェードにして、bloom が「同色から
+    /// 浮かび上がる」読み心地になるよう揃えている。
+    fn completion_reveal_opts(status: &RepoStatus) -> Option<RevealOpts> {
+        let (from, to) = match status {
+            RepoStatus::Updated => (Rgb(20, 60, 20), Rgb(120, 220, 120)),
+            RepoStatus::Failed => (Rgb(60, 20, 20), Rgb(220, 80, 80)),
+            RepoStatus::Untracked => (Rgb(60, 20, 60), Rgb(220, 120, 220)),
+            RepoStatus::Unchanged => (Rgb(50, 50, 50), Rgb(150, 150, 150)),
+            RepoStatus::Waiting | RepoStatus::Running => return None,
+        };
+        Some(RevealOpts {
+            char_interval: Duration::from_millis(18),
+            fade_duration: Duration::from_millis(180),
+            fade_from: from,
+            fade_to: to,
+        })
     }
 
     pub fn get_repos_handle(&self) -> Arc<Mutex<Vec<RepoProgress>>> {
@@ -295,17 +332,13 @@ impl TuiApp {
         }
 
         match key {
-            KeyCode::Char('j') | KeyCode::Down => {
-                if self.selected + 1 < repo_count {
-                    self.selected += 1;
-                    self.detail_scroll = 0;
-                }
+            KeyCode::Char('j') | KeyCode::Down if self.selected + 1 < repo_count => {
+                self.selected += 1;
+                self.detail_scroll = 0;
             }
-            KeyCode::Char('k') | KeyCode::Up => {
-                if self.selected > 0 {
-                    self.selected -= 1;
-                    self.detail_scroll = 0;
-                }
+            KeyCode::Char('k') | KeyCode::Up if self.selected > 0 => {
+                self.selected -= 1;
+                self.detail_scroll = 0;
             }
             KeyCode::Char('g') => {
                 self.selected = 0;
@@ -650,6 +683,23 @@ impl TuiApp {
     fn render_repos(&mut self, f: &mut Frame, area: Rect) {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
 
+        // Lazy-init the "completion bloom" reveal the first time we see a repo in
+        // a terminal status. We anchor every new reveal at the same `now` so
+        // co-completing repos bloom in unison rather than staggered.
+        let now = Instant::now();
+        for repo in repos.iter() {
+            if self.name_reveals.contains_key(&repo.path) {
+                continue;
+            }
+            if let Some(opts) = Self::completion_reveal_opts(&repo.status) {
+                let display = Self::format_repo_name(&repo.name);
+                self.name_reveals.insert(
+                    repo.path.clone(),
+                    RevealHandle::start_at(display.trim_end(), opts, now),
+                );
+            }
+        }
+
         // Each repo takes 2 lines (status + progress bar), no blank line between
         let lines_per_repo = 2;
         let visible_height = area.height.saturating_sub(2) as usize; // subtract borders
@@ -695,26 +745,53 @@ impl TuiApp {
 
             let selector = if is_selected { "▸" } else { " " };
 
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!("{selector}{status_icon} "),
-                    Style::default()
-                        .fg(status_color)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    if repo.name.len() > 36 {
-                        format!("{}…", &repo.name[..35])
-                    } else {
-                        format!("{:36}", repo.name)
-                    },
-                    name_style,
-                ),
-                Span::styled(
-                    format!(" {}", repo.message),
-                    Style::default().fg(Color::White),
-                ),
-            ]));
+            let mut spans = vec![Span::styled(
+                format!("{selector}{status_icon} "),
+                Style::default()
+                    .fg(status_color)
+                    .add_modifier(Modifier::BOLD),
+            )];
+            let display_name = Self::format_repo_name(&repo.name);
+            let bloom = self
+                .name_reveals
+                .get(&repo.path)
+                .filter(|h| !h.is_done(now));
+            if let Some(reveal) = bloom {
+                // Bloom in progress: per-grapheme colored spans, then pad to width.
+                let snap = reveal.snapshot(now);
+                let trimmed = display_name.trim_end();
+                let mut consumed = 0usize;
+                for g in &snap {
+                    consumed += g.text.chars().count();
+                    spans.push(Span::styled(
+                        g.text.clone(),
+                        Style::default()
+                            .fg(Color::Rgb(g.color.0, g.color.1, g.color.2))
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                let trimmed_chars = trimmed.chars().count();
+                if consumed < trimmed_chars {
+                    // Graphemes not yet revealed — keep their slots so width doesn't
+                    // shift between frames. Render as dim placeholders.
+                    let placeholder: String = trimmed.chars().skip(consumed).collect();
+                    spans.push(Span::styled(
+                        placeholder,
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                }
+                let total_chars = display_name.chars().count();
+                if trimmed_chars < total_chars {
+                    spans.push(Span::raw(" ".repeat(total_chars - trimmed_chars)));
+                }
+            } else {
+                spans.push(Span::styled(display_name, name_style));
+            }
+            spans.push(Span::styled(
+                format!(" {}", repo.message),
+                Style::default().fg(Color::White),
+            ));
+            lines.push(Line::from(spans));
 
             // Progress bar
             let bar_width = 40;
