@@ -23,7 +23,10 @@ impl GitController {
     }
 
     pub fn git_clone(&self, dir: &Path, remote: &str, branch: &str) -> GitResult {
-        let result = self.exec_git(dir, &["clone", remote, "-b", branch]);
+        let result = self.exec_git(
+            dir,
+            &["clone", remote, "-b", branch, "--recurse-submodules"],
+        );
         GitResult {
             had_changes: result.success,
             ..result
@@ -31,11 +34,58 @@ impl GitController {
     }
 
     pub fn git_pull(&self, dir: &Path) -> GitResult {
-        let result = self.exec_git(dir, &["pull"]);
-        let had_changes = result.success && !result.output.contains("Already up to date");
+        let mut all_output = String::new();
+
+        // 1. Fetch from remote. This is the only path that can mark pull as Failed
+        //    (network / auth errors). Everything after this stays success:true.
+        let fetch_result = self.exec_git(dir, &["fetch", "--prune"]);
+        all_output.push_str(&fetch_result.output);
+        if !fetch_result.success {
+            return GitResult {
+                output: all_output,
+                success: false,
+                had_changes: false,
+            };
+        }
+
+        // 2. Determine current branch and upstream.
+        let head = self.exec_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let detached = !head.success || head.output.trim() == "HEAD";
+        let upstream = self.exec_git(
+            dir,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        );
+        let has_upstream = upstream.success;
+
+        // 3. Merge branch. None of these mark pull as Failed.
+        let mut ff_applied = false;
+        if detached || !has_upstream {
+            all_output.push_str("[gitpp] fetched only (no upstream)\n");
+        } else {
+            let merge_result = self.exec_git(dir, &["merge", "--ff-only", "@{u}"]);
+            all_output.push_str(&merge_result.output);
+            if merge_result.success {
+                // Fast-forward succeeded. "changed" only when something actually moved.
+                ff_applied = !merge_result.output.contains("Already up to date");
+            } else {
+                // Diverged (non-FF) or dirty working tree blocking the update.
+                // Do not error and do not discard the user's changes — just report.
+                all_output.push_str("[gitpp] fast-forward skipped (diverged or local changes)\n");
+            }
+        }
+
+        // 4. Sync submodules. Failure here never affects the pull result.
+        let sub_result = self.exec_git(dir, &["submodule", "update", "--init", "--recursive"]);
+        all_output.push_str(&sub_result.output);
+        let sub_changed = sub_result.success && !sub_result.output.trim().is_empty();
+        if !sub_result.success {
+            all_output.push_str("[gitpp] warning: submodule update failed\n");
+        }
+
         GitResult {
-            had_changes,
-            ..result
+            output: all_output,
+            success: true,
+            had_changes: ff_applied || sub_changed,
         }
     }
 
