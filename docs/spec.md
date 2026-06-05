@@ -33,8 +33,8 @@ Last updated: 2026-04-06
 
 | Command | Git commands executed | Notes |
 |---|---|---|
-| clone | `git clone <remote> -b <branch>` | Run inside the group subdirectory |
-| pull | `git pull` | Conflicts are not auto-resolved; reported as Failed |
+| clone | `git clone <remote> -b <branch> --recurse-submodules` | Run inside the group subdirectory; submodules are fetched too |
+| pull | `git fetch --prune` → `git merge --ff-only @{u}` → `git submodule update --init --recursive` | See "Robust Pull" below. Only a failed fetch is reported as Failed |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | Commit message is fixed to `comments.default` |
 | status | `git status --porcelain` | Read-only; no config applied |
 | diff | `git diff --stat HEAD` | Read-only; staged + unstaged; no config applied |
@@ -43,6 +43,26 @@ Last updated: 2026-04-06
 | switch | `git rev-parse --verify refs/heads/main` → `git switch main` (or master) | Requires Git 2.23+; detects default branch via local refs only |
 | stash list | `git stash list` | Read-only; no config applied |
 | gc | `git gc` | No config applied |
+
+### Robust Pull
+
+Pull is designed never to abort a batch run on recoverable repository states. It runs as a sequence:
+
+1. `git fetch --prune` updates remote-tracking refs and removes stale ones.
+   A failure here (network or authentication error) is the **only** path that marks pull as Failed.
+2. The current branch (`git rev-parse --abbrev-ref HEAD`) and its upstream
+   (`git rev-parse --abbrev-ref --symbolic-full-name @{u}`) are inspected.
+3. Merge step (always keeps pull `success: true`):
+   - **Detached HEAD or no upstream** → merge is skipped; the output notes "fetched only (no upstream)".
+   - **Upstream present** → `git merge --ff-only @{u}` is attempted.
+     - Success → reported as Updated when the tree actually moved (not "Already up to date").
+     - Failure (diverged / non-fast-forward, or local changes blocking the update) → **not** an error.
+       The working tree is never reset and local changes are never discarded; the reason is reported and the repo is left as Unchanged.
+4. `git submodule update --init --recursive` synchronizes submodules.
+   A failure here is recorded as a warning in the output but never changes the pull result.
+
+As a result, only a failed fetch produces Failed. Diverged, detached, no-upstream, and dirty repositories
+complete as Unchanged with an explanatory message in the output, so a batch pull never collapses into "lots of errors".
 
 ### Push Opt-In Design
 
@@ -213,10 +233,12 @@ Pressing `q` at any time during execution exits immediately.
 ### Error Detection
 
 Exit code of the git subprocess determines the result. Any non-zero exit code → Failed.
+Pull is an exception: only a failed `git fetch --prune` marks it Failed (see "Robust Pull").
+Diverged, detached, no-upstream, and dirty repositories complete with `success: true`.
 
 `GitResult` includes a `had_changes` field that distinguishes Updated from Unchanged:
-- **pull**: `had_changes` is true when the output does not contain "Already up to date"
-- **clone**: `had_changes` is true when the clone succeeds (already-cloned repos are detected before calling git)
+- **pull**: `had_changes` is true when a fast-forward actually moved the branch, or when the submodule update checked something out. A no-op fast-forward ("Already up to date"), a skipped merge (no upstream / detached / diverged / dirty), and an empty submodule update all yield Unchanged.
+- **clone**: `had_changes` is true when the clone succeeds (already-cloned repos are detected before calling git). Submodules are fetched via `--recurse-submodules`.
 - **push**: `had_changes` is true when `git commit` succeeds (i.e. there was something to commit and push)
 - **status**: `had_changes` is true when there are uncommitted changes (non-empty output)
 - **diff**: `had_changes` is true when there are staged or unstaged differences (non-empty output)
