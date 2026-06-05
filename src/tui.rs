@@ -91,7 +91,7 @@ impl TuiApp {
         if name.len() > 36 {
             format!("{}…", &name[..35])
         } else {
-            format!("{:36}", name)
+            format!("{name:36}")
         }
     }
 
