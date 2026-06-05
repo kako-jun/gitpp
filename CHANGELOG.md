@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.7.7 — 2026-06-05
+
+### Added
+
+- **Submodule sync on every pull.** `gitpp pull` now runs
+  `git submodule update --init --recursive` after fetching, so repos with
+  `vendor/*` submodules no longer drift into a dirty state that silently
+  blocks future pulls. `clone` now uses `--recurse-submodules` so a freshly
+  cloned repo starts clean.
+
+### Changed
+
+- **Robust pull that never gets stuck.** `pull` is now
+  `git fetch --prune` → fast-forward the current branch (`merge --ff-only`)
+  → submodule sync. A dirty working tree, a missing upstream, a detached
+  HEAD, or a diverged branch no longer aborts the pull — only a failed
+  fetch is reported as Failed, and local changes are never discarded. The
+  YAML `branch:` field stays clone/switch-only; pull and push both act on
+  the current branch.
+
 ## v0.7.6 — 2026-05-17
 
 ### Added
