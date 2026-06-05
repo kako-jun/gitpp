@@ -77,6 +77,9 @@ impl GitController {
         // 4. Sync submodules. Failure here never affects the pull result.
         let sub_result = self.exec_git(dir, &["submodule", "update", "--init", "--recursive"]);
         all_output.push_str(&sub_result.output);
+        // Best-effort: treat non-empty output as "a submodule was actually checked out".
+        // Today git emits nothing here for a submodule-less repo, so Unchanged stays correct;
+        // a future git that prints informational lines for such repos could flip this to Updated.
         let sub_changed = sub_result.success && !sub_result.output.trim().is_empty();
         if !sub_result.success {
             all_output.push_str("[gitpp] warning: submodule update failed\n");
@@ -353,7 +356,7 @@ mod tests {
     /// Add a new commit on `main` to `origin` (via a throwaway clone) so a later
     /// `git_pull` of a work tree sees the branch advance.
     fn advance_origin(parent: &Path, origin: &Path) {
-        let bump = parent.join(format!("bump-{}", head_sha_seed(parent)));
+        let bump = parent.join(format!("bump-{}", dir_entry_count(parent)));
         git(
             parent,
             &["clone", origin.to_str().unwrap(), bump.to_str().unwrap()],
@@ -366,7 +369,7 @@ mod tests {
     }
 
     // Tiny unique-ish suffix so repeated advances use distinct temp clone dirs.
-    fn head_sha_seed(parent: &Path) -> String {
+    fn dir_entry_count(parent: &Path) -> String {
         let n = fs::read_dir(parent).map(|d| d.count()).unwrap_or(0);
         format!("{n}")
     }
