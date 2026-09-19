@@ -730,28 +730,34 @@ fn spawn_pull_workers(
             let result = git.git_pull(&repo_dir);
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
-            if result.success {
-                if result.had_changes {
-                    update_repo_status(
-                        &repos_handle,
-                        &repo_name,
-                        RepoStatus::Updated,
-                        "Updated",
-                        100,
-                    );
-                } else {
-                    update_repo_status(
-                        &repos_handle,
-                        &repo_name,
-                        RepoStatus::Unchanged,
-                        "Unchanged",
-                        100,
-                    );
-                }
-            } else {
-                update_repo_status(&repos_handle, &repo_name, RepoStatus::Failed, "Failed", 100);
-            }
+            let status = resolve_pull_status(&result);
+            let message = match status {
+                RepoStatus::Blocked => "Blocked",
+                RepoStatus::Updated => "Updated",
+                RepoStatus::Unchanged => "Unchanged",
+                _ => "Failed",
+            };
+            update_repo_status(&repos_handle, &repo_name, status, message, 100);
         });
+    }
+}
+
+/// Map a pull's raw `GitResult` to the `RepoStatus` the TUI should show.
+///
+/// `blocked` takes priority over `had_changes`: a submodule can be checked
+/// out for the first time (`had_changes: true`) in the same pull where the
+/// main branch's ff-only merge was skipped (`blocked: true`). The user still
+/// needs to know the branch itself didn't update, so `Blocked` must not be
+/// masked by `Updated`.
+fn resolve_pull_status(result: &git_controller::GitResult) -> RepoStatus {
+    if !result.success {
+        RepoStatus::Failed
+    } else if result.blocked {
+        RepoStatus::Blocked
+    } else if result.had_changes {
+        RepoStatus::Updated
+    } else {
+        RepoStatus::Unchanged
     }
 }
 
@@ -1068,6 +1074,47 @@ mod tests {
         let result = detect_untracked_repos(base, &refs);
 
         assert!(result.is_empty());
+    }
+
+    // --- resolve_pull_status: GitResult -> RepoStatus mapping ---------------
+
+    fn fake_result(success: bool, had_changes: bool, blocked: bool) -> git_controller::GitResult {
+        git_controller::GitResult {
+            output: String::new(),
+            success,
+            had_changes,
+            blocked,
+        }
+    }
+
+    #[test]
+    fn resolve_pull_status_table() {
+        // (success, had_changes, blocked, expected)
+        let cases = [
+            // A fetch/network failure is always Failed, no matter what the
+            // other flags happen to hold (they're meaningless on failure).
+            (false, false, false, RepoStatus::Failed),
+            (false, true, true, RepoStatus::Failed),
+            // No movement, nothing blocked.
+            (true, false, false, RepoStatus::Unchanged),
+            // Something moved (ff-only applied and/or a submodule checkout).
+            (true, true, false, RepoStatus::Updated),
+            // ff-only merge was skipped (diverged/dirty tree), nothing else moved.
+            (true, false, true, RepoStatus::Blocked),
+            // The priority case this Issue exists for: a submodule checkout
+            // can set had_changes even while the superproject's merge is
+            // blocked. Blocked must win, not be masked by Updated.
+            (true, true, true, RepoStatus::Blocked),
+        ];
+
+        for (success, had_changes, blocked, expected) in cases {
+            let result = fake_result(success, had_changes, blocked);
+            assert_eq!(
+                resolve_pull_status(&result),
+                expected,
+                "success={success} had_changes={had_changes} blocked={blocked}"
+            );
+        }
     }
 
     #[test]

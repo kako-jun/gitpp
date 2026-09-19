@@ -24,6 +24,10 @@ pub enum RepoStatus {
     Running,
     Updated,
     Unchanged,
+    /// pull-only: the ff-only merge was skipped (diverged branch or dirty
+    /// working tree). Distinct from Unchanged so it can be flagged for
+    /// manual follow-up. Never produced by other commands.
+    Blocked,
     Failed,
     Untracked,
 }
@@ -96,14 +100,15 @@ impl TuiApp {
     }
 
     /// 完了 bloom 用 reveal の色。Updated は green、Failed は red、Unchanged/Untracked は
-    /// それぞれの状態色へ。fade_from はその色の暗いシェードにして、bloom が「同色から
-    /// 浮かび上がる」読み心地になるよう揃えている。
+    /// それぞれの状態色へ。Blocked は要確認を示す orange。fade_from はその色の暗いシェード
+    /// にして、bloom が「同色から浮かび上がる」読み心地になるよう揃えている。
     fn completion_reveal_opts(status: &RepoStatus) -> Option<RevealOpts> {
         let (from, to) = match status {
             RepoStatus::Updated => (Rgb(20, 60, 20), Rgb(120, 220, 120)),
             RepoStatus::Failed => (Rgb(60, 20, 20), Rgb(220, 80, 80)),
             RepoStatus::Untracked => (Rgb(60, 20, 60), Rgb(220, 120, 220)),
             RepoStatus::Unchanged => (Rgb(50, 50, 50), Rgb(150, 150, 150)),
+            RepoStatus::Blocked => (Rgb(60, 40, 10), Rgb(230, 160, 40)),
             RepoStatus::Waiting | RepoStatus::Running => return None,
         };
         Some(RevealOpts {
@@ -173,6 +178,10 @@ impl TuiApp {
                             eprintln!("[{}] {}... unchanged", self.command, repo.name);
                             reported.insert(repo.name.clone());
                         }
+                        RepoStatus::Blocked => {
+                            eprintln!("[{}] {}... blocked", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
                         RepoStatus::Failed => {
                             eprintln!("[{}] {}... FAILED", self.command, repo.name);
                             reported.insert(repo.name.clone());
@@ -190,6 +199,7 @@ impl TuiApp {
                         r.status,
                         RepoStatus::Updated
                             | RepoStatus::Unchanged
+                            | RepoStatus::Blocked
                             | RepoStatus::Failed
                             | RepoStatus::Untracked
                     )
@@ -262,6 +272,7 @@ impl TuiApp {
                     r.status,
                     RepoStatus::Updated
                         | RepoStatus::Unchanged
+                        | RepoStatus::Blocked
                         | RepoStatus::Failed
                         | RepoStatus::Untracked
                 )
@@ -399,12 +410,19 @@ impl TuiApp {
         }
     }
 
+    /// A repo needs the user's manual attention: either the command failed
+    /// outright, or (pull-only) the ff-only merge was skipped and the user
+    /// has to resolve a divergence/dirty tree themselves.
+    fn needs_manual_attention(status: &RepoStatus) -> bool {
+        matches!(status, RepoStatus::Failed | RepoStatus::Blocked)
+    }
+
     fn jump_to_next_failed(&mut self, repo_count: usize) {
         let found = {
             let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
             (1..repo_count)
                 .map(|offset| (self.selected + offset) % repo_count)
-                .find(|&idx| repos[idx].status == RepoStatus::Failed)
+                .find(|&idx| Self::needs_manual_attention(&repos[idx].status))
         };
         if let Some(idx) = found {
             self.selected = idx;
@@ -419,7 +437,7 @@ impl TuiApp {
             let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
             (1..repo_count)
                 .map(|offset| (self.selected + repo_count - offset) % repo_count)
-                .find(|&idx| repos[idx].status == RepoStatus::Failed)
+                .find(|&idx| Self::needs_manual_attention(&repos[idx].status))
         };
         if let Some(idx) = found {
             self.selected = idx;
@@ -440,6 +458,10 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
+        let blocked_count = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Blocked)
+            .count();
         let failed: Vec<_> = repos
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
@@ -449,17 +471,17 @@ impl TuiApp {
             .filter(|r| r.status == RepoStatus::Untracked)
             .count();
 
-        let done = updated_count + unchanged_count + failed.len() + untracked_count;
+        let done = updated_count + unchanged_count + blocked_count + failed.len() + untracked_count;
 
         if failed.is_empty() {
-            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: 0 / Untracked: {untracked_count})");
+            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Blocked: {blocked_count} / Failed: 0 / Untracked: {untracked_count})");
             return;
         }
 
         // Plain text, no ANSI codes — clipboard-friendly
         let failed_count = failed.len();
         println!(
-            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: {failed_count} / Untracked: {untracked_count})\n"
+            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Blocked: {blocked_count} / Failed: {failed_count} / Untracked: {untracked_count})\n"
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
@@ -634,6 +656,10 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
+        let blocked = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Blocked)
+            .count();
         let failed = repos
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
@@ -642,7 +668,7 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Untracked)
             .count();
-        let done = updated + unchanged + failed + untracked;
+        let done = updated + unchanged + blocked + failed + untracked;
         drop(repos);
 
         let stats_line = Line::from(vec![
@@ -657,6 +683,12 @@ impl TuiApp {
             Span::raw(" / "),
             Span::styled("Unchanged: ", Style::default().fg(Color::White)),
             Span::styled(format!("{unchanged}"), Style::default().fg(Color::DarkGray)),
+            Span::raw(" / "),
+            Span::styled("Blocked: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{blocked}"),
+                Style::default().fg(Color::Rgb(230, 160, 40)),
+            ),
             Span::raw(" / "),
             Span::styled("Failed: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed}"), Style::default().fg(Color::Red)),
@@ -729,6 +761,7 @@ impl TuiApp {
                 RepoStatus::Running => ("▶", Color::Yellow),
                 RepoStatus::Updated => ("✓", Color::Green),
                 RepoStatus::Unchanged => ("─", Color::DarkGray),
+                RepoStatus::Blocked => ("⚠", Color::Rgb(230, 160, 40)),
                 RepoStatus::Failed => ("✗", Color::Red),
                 RepoStatus::Untracked => ("?", Color::Magenta),
             };
@@ -809,6 +842,7 @@ impl TuiApp {
                 Style::default().fg(match repo.status {
                     RepoStatus::Updated => Color::Green,
                     RepoStatus::Unchanged => Color::DarkGray,
+                    RepoStatus::Blocked => Color::Rgb(230, 160, 40),
                     RepoStatus::Failed => Color::Red,
                     RepoStatus::Running => Color::Yellow,
                     RepoStatus::Waiting => Color::DarkGray,
@@ -906,7 +940,12 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
 
 #[cfg(test)]
 mod tests {
-    use super::TuiApp;
+    use super::{update_repo_status, RepoStatus, TuiApp};
+    use jiwa::Rgb;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn sanitize_summary_text_removes_ansi_sequences() {
@@ -939,5 +978,123 @@ mod tests {
     fn sanitize_summary_text_keeps_plain_text_after_unknown_escape() {
         let text = "before\x1bXafter";
         assert_eq!(TuiApp::sanitize_summary_text(text), "beforeXafter");
+    }
+
+    // --- completion_reveal_opts: Blocked gets its own orange reveal ---------
+
+    #[test]
+    fn completion_reveal_opts_blocked_is_orange() {
+        let opts = TuiApp::completion_reveal_opts(&RepoStatus::Blocked)
+            .expect("Blocked must have a completion reveal, like every other terminal status");
+        assert_eq!(
+            opts.fade_to,
+            Rgb(230, 160, 40),
+            "Blocked's reveal must fade to the same orange used elsewhere in the UI"
+        );
+    }
+
+    // --- run_quiet: Blocked counts as done, alone and mixed with Failed -----
+
+    /// Build a `TuiApp` with the given (name, path, status) rows already set,
+    /// bypassing the Waiting default `TuiApp::new` starts every repo at.
+    fn app_with_statuses(rows: &[(&str, &str, RepoStatus)]) -> TuiApp {
+        let names = rows.iter().map(|(n, _, _)| n.to_string()).collect();
+        let paths = rows.iter().map(|(_, p, _)| p.to_string()).collect();
+        let app = TuiApp::new(names, paths, "pull");
+        let handle = app.get_repos_handle();
+        for (name, _, status) in rows {
+            update_repo_status(&handle, name, status.clone(), "done", 100);
+        }
+        app
+    }
+
+    /// A regression here (Blocked dropped from run_quiet's `all_done` check)
+    /// would make run_quiet spin forever instead of failing a single
+    /// assertion, so arm a watchdog that force-interrupts the loop well
+    /// after any correct run would already have finished.
+    fn run_quiet_with_watchdog(app: &mut TuiApp) -> Duration {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let watchdog_flag = Arc::clone(&interrupted);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(2));
+            watchdog_flag.store(true, Ordering::Relaxed);
+        });
+
+        let start = Instant::now();
+        app.run_quiet(interrupted)
+            .expect("run_quiet must not error");
+        start.elapsed()
+    }
+
+    #[test]
+    fn run_quiet_treats_blocked_only_repo_as_done() {
+        let mut app = app_with_statuses(&[("a", "/tmp/a", RepoStatus::Blocked)]);
+        let elapsed = run_quiet_with_watchdog(&mut app);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "a Blocked-only repo must be recognized as done immediately, not require the watchdog: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn run_quiet_treats_blocked_and_failed_mix_as_done() {
+        let mut app = app_with_statuses(&[
+            ("a", "/tmp/a", RepoStatus::Blocked),
+            ("b", "/tmp/b", RepoStatus::Failed),
+        ]);
+        let elapsed = run_quiet_with_watchdog(&mut app);
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "a Blocked+Failed mix must be recognized as fully done, not require the watchdog: {elapsed:?}"
+        );
+    }
+
+    // --- n/N jump: Blocked repos need manual follow-up too ------------------
+
+    #[test]
+    fn jump_to_next_failed_also_finds_blocked_only_repos() {
+        let mut app = app_with_statuses(&[
+            ("a", "/tmp/a", RepoStatus::Unchanged),
+            ("b", "/tmp/b", RepoStatus::Blocked),
+            ("c", "/tmp/c", RepoStatus::Unchanged),
+        ]);
+        app.selected = 0;
+        app.jump_to_next_failed(3);
+        assert_eq!(
+            app.selected, 1,
+            "n must jump to a Blocked-only repo, not just a Failed one"
+        );
+    }
+
+    #[test]
+    fn jump_to_prev_failed_also_finds_blocked_only_repos() {
+        let mut app = app_with_statuses(&[
+            ("a", "/tmp/a", RepoStatus::Unchanged),
+            ("b", "/tmp/b", RepoStatus::Blocked),
+            ("c", "/tmp/c", RepoStatus::Unchanged),
+        ]);
+        app.selected = 2;
+        app.jump_to_prev_failed(3);
+        assert_eq!(
+            app.selected, 1,
+            "N must jump backward to a Blocked-only repo too"
+        );
+    }
+
+    #[test]
+    fn jump_to_next_failed_finds_both_failed_and_blocked_in_mixed_list() {
+        let mut app = app_with_statuses(&[
+            ("a", "/tmp/a", RepoStatus::Unchanged),
+            ("b", "/tmp/b", RepoStatus::Blocked),
+            ("c", "/tmp/c", RepoStatus::Unchanged),
+            ("d", "/tmp/d", RepoStatus::Failed),
+        ]);
+        app.selected = 0;
+
+        app.jump_to_next_failed(4);
+        assert_eq!(app.selected, 1, "first jump lands on the Blocked repo");
+
+        app.jump_to_next_failed(4);
+        assert_eq!(app.selected, 3, "second jump lands on the Failed repo");
     }
 }

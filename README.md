@@ -38,7 +38,7 @@ not a global config file.
 
 - **Parallel clone/pull/push** with configurable concurrency (`jobs`, default 20)
 - **7 subcommands beyond clone/pull/push** — status, diff, fetch, branch, switch, stash list, gc
-- **Full-screen TUI** (ratatui) with 6-state icons (Waiting/Running/Updated/Unchanged/Failed/Untracked)
+- **Full-screen TUI** (ratatui) with 7-state icons (Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked)
 - **Per-directory git config** — `user.name`, `pull.rebase`, and any other git config key,
   applied locally to every repo in the group
 - **Push opt-in** — push is disabled unless `comments.default` is explicitly set; clone/pull
@@ -74,7 +74,7 @@ A full-screen TUI shows real-time progress for every repository:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:issue  q:quit │
 │        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
@@ -86,7 +86,7 @@ A full-screen TUI shows real-time progress for every repository:
 │  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -100,7 +100,7 @@ The detail pane is shown by default. Press Enter to toggle it off/on:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:issue  q:quit │
 │        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
@@ -110,7 +110,7 @@ The detail pane is shown by default. Press Enter to toggle it off/on:
 │                                │   (7/12) 1.2 MiB            │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -238,7 +238,7 @@ gitpp> exit
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate repos |
 | `g` / `G` | Jump to top / bottom |
-| `n` / `N` | Jump to next / previous error |
+| `n` / `N` | Jump to next / previous problem repo (Failed or Blocked) |
 | `Enter` | Toggle detail pane (shown by default) |
 | `h` / `l` / `←` / `→` | Scroll detail pane (3 lines at a time) |
 | `y` | Copy selected repo's output to clipboard |

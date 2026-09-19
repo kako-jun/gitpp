@@ -36,7 +36,7 @@ gitpp は逆の発想をとる。`~/.gitconfig` のグローバル設定には�
 
 - **clone / pull / push を並列実行**（並列度は `jobs` で設定、デフォルト20）
 - **status / diff / fetch / branch / switch / stash list / gc** — リポジトリ横断の一括操作
-- **フルスクリーンTUI**（ratatui）— 6状態表示（Waiting/Running/Updated/Unchanged/Failed/Untracked）とリアルタイムプログレス
+- **フルスクリーンTUI**（ratatui）— 7状態表示（Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked）とリアルタイムプログレス
 - **場所ごとに git config を分離** — `user.name`, `pull.rebase` など任意の git config キーをグループ内の全リポジトリにローカル設定
 - **push はオプトイン制** — `comments.default` を明示的に設定しない限り push は無効。clone/pull はそれなしで動く
 - **AIエージェント向けサマリー** — 完了後にプレーンテキストで結果を stdout に出力。そのままAIに貼り付けられる
@@ -84,7 +84,7 @@ gitpp gc           # ガベージコレクション（-j で並列数制限推�
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  g/G:top/end  n/N:next error  │
+│ gitpp  j/k:move  Enter:detail  g/G:top/end  n/N:next issue │
 │ h/l:scroll  y:copy  Esc:back  q:quit                        │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
@@ -96,7 +96,7 @@ gitpp gc           # ガベージコレクション（-j で並列数制限推�
 │  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 30 / Unchanged: 18 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 30 / Unchanged: 18 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -108,7 +108,7 @@ gitpp gc           # ガベージコレクション（-j で並列数制限推�
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  g/G:top/end  n/N:next error  │
+│ gitpp  j/k:move  Enter:detail  g/G:top/end  n/N:next issue │
 │ h/l:scroll  y:copy  Esc:back  q:quit                        │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
@@ -118,7 +118,7 @@ gitpp gc           # ガベージコレクション（-j で並列数制限推�
 │                                │   (7/12) 1.2 MiB            │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 30 / Unchanged: 18 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 30 / Unchanged: 18 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -244,7 +244,7 @@ gitpp> exit
 |------|------|
 | `j` / `k` / `↑` / `↓` | リポジトリを選択・スクロール |
 | `g` / `G` | 先頭 / 末尾へ移動 |
-| `n` / `N` | 次 / 前のエラーにジャンプ |
+| `n` / `N` | 次 / 前の要対応リポ（Failed または Blocked）にジャンプ |
 | `Enter` | 詳細ペインの表示/非表示 |
 | `h` / `l` / `←` / `→` | 詳細ペイン内をスクロール（3行ずつ） |
 | `y` | 選択中リポジトリの出力をクリップボードにコピー |
@@ -261,6 +261,7 @@ gitpp> exit
 | `▶` | Running | — |
 | `✓` | Updated | 緑 |
 | `─` | Unchanged | グレー |
+| `⚠` | Blocked（pull限定。ff-onlyマージがスキップされた） | オレンジ |
 | `✗` | Failed | 赤 |
 
 ### clone の重複検出
