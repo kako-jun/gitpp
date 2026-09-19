@@ -4,7 +4,7 @@ mod setting_util;
 mod tui;
 
 use git_controller::GitController;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
@@ -716,7 +716,10 @@ fn spawn_pull_workers(
         let recovery = match &pull_mode {
             PullMode::Default => git_controller::PullRecovery::None,
             PullMode::StashLocal => git_controller::PullRecovery::StashLocal,
-            PullMode::DiscardLocal(names) if names.contains(&repo_name) => {
+            PullMode::DiscardLocal(names)
+                if names.contains(&repo_name)
+                    || names.contains(&format!("{}/{}", repo_data.group, repo_name)) =>
+            {
                 git_controller::PullRecovery::DiscardLocal
             }
             PullMode::DiscardLocal(_) => git_controller::PullRecovery::None,
@@ -784,10 +787,16 @@ fn parse_pull_mode(
     args: &[String],
     enabled_repos: &[&setting_util::Repos],
 ) -> Result<PullMode, String> {
-    let repo_names: HashSet<String> = enabled_repos
-        .iter()
-        .map(|repo| extract_repo_name(&repo.remote))
-        .collect();
+    let mut repo_names: HashMap<String, Vec<String>> = HashMap::new();
+    let mut repo_identifiers = HashSet::new();
+    for repo in enabled_repos {
+        let name = extract_repo_name(&repo.remote);
+        repo_names
+            .entry(name.clone())
+            .or_default()
+            .push(repo.group.clone());
+        repo_identifiers.insert(format!("{}/{}", repo.group, name));
+    }
     let mut stash_local = false;
     let mut discard_local = Vec::new();
     let mut i = 1;
@@ -825,7 +834,16 @@ fn parse_pull_mode(
 
     let mut names = HashSet::new();
     for name in discard_local {
-        if !repo_names.contains(&name) {
+        if repo_identifiers.contains(&name) {
+            // `group/repo` is always unambiguous, even when multiple groups
+            // contain repositories with the same basename.
+        } else if let Some(groups) = repo_names.get(&name) {
+            if groups.len() > 1 {
+                return Err(format!(
+                    "Ambiguous repository for --discard-local: {name}. Use group/{name}."
+                ));
+            }
+        } else {
             return Err(format!(
                 "Unknown repository for --discard-local: {name}. Use an enabled repository name."
             ));
@@ -1299,6 +1317,36 @@ mod tests {
         )
         .unwrap_err();
         assert!(duplicate.contains("Duplicate repository"));
+
+        let ambiguous_repos = make_repo(&[
+            ("git@github.com:one/shared.git", "main", "one"),
+            ("git@github.com:two/shared.git", "main", "two"),
+        ]);
+        let ambiguous_refs: Vec<_> = ambiguous_repos.iter().collect();
+        let ambiguous = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "shared".to_string(),
+            ],
+            &ambiguous_refs,
+        )
+        .unwrap_err();
+        assert!(ambiguous.contains("Ambiguous repository"));
+
+        let qualified = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "one/shared".to_string(),
+            ],
+            &ambiguous_refs,
+        )
+        .unwrap();
+        assert_eq!(
+            qualified,
+            PullMode::DiscardLocal(HashSet::from(["one/shared".to_string()]))
+        );
     }
 
     #[test]

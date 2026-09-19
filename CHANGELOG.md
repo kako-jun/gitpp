@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Explicit recovery for blocked pulls.** `gitpp pull --stash-local` temporarily stashes
+  recoverable local changes and restores only a stash entry created by that invocation. A stash
+  pop conflict is reported as Failed while the stash is retained. `gitpp pull --discard-local
+  <repo...>` provides a confirmation-gated, target-limited route for discarding
+  uncommitted changes; ambiguous repository basenames require `group/repo`.
+
 ## v0.7.7 — 2026-06-05
 
 ### Added

@@ -45,7 +45,7 @@ not a global config file.
   work without it
 - **Explicit blocked-pull recovery** — `--stash-local` safely stashes and restores local
   changes, while `--discard-local <repo...>` is limited to named repositories and requires
-  an interactive confirmation
+  an interactive confirmation. Use `group/repo` when a basename is ambiguous.
 - **AI-friendly summary** — plain-text output after completion, paste directly to your AI
   assistant for diagnosis
 - **Clean terminal teardown** — exits without enabling terminal mouse capture, avoiding stray mouse-report bytes in the shell prompt
@@ -246,11 +246,13 @@ Plain `gitpp pull` is always safe: a diverged branch or dirty working tree is re
 
 - `gitpp pull --stash-local` includes untracked files in a temporary stash, retries the
   fast-forward, and pops the stash afterward. If the pop conflicts, gitpp reports `Failed`,
-  keeps the stash, and tells you to resolve the conflict before retrying.
-- `gitpp pull --discard-local <repo...>` requires one or more exact enabled repository names.
-  It asks you to type `discard`, then runs `git reset --hard HEAD` and `git clean -fd` only for
-  those named repositories before retrying the fast-forward. Other repositories use the normal
-  safe pull path. Local commits are never discarded by this option.
+  keeps the stash, and tells you to resolve the conflict before retrying. If Git cannot create a
+  stash (for example, a dirty submodule), existing stash entries and local changes are left alone.
+- `gitpp pull --discard-local <repo...>` requires one or more enabled repository names. A
+  basename must be unique; if multiple groups contain the same basename, use the unambiguous
+  `group/repo` identifier. It asks you to type `discard`, then runs `git reset --hard HEAD` and
+  `git clean -fd` only for those named repositories before retrying the fast-forward. Other
+  repositories use the normal safe pull path. Local commits are never discarded by this option.
 
 The discard confirmation is required in quiet mode too; pipe the exact word `discard` from a
 trusted interactive workflow if automation is intentional.

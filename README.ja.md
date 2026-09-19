@@ -39,7 +39,7 @@ gitpp は逆の発想をとる。`~/.gitconfig` のグローバル設定には�
 - **フルスクリーンTUI**（ratatui）— 7状態表示（Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked）とリアルタイムプログレス
 - **場所ごとに git config を分離** — `user.name`, `pull.rebase` など任意の git config キーをグループ内の全リポジトリにローカル設定
 - **push はオプトイン制** — `comments.default` を明示的に設定しない限り push は無効。clone/pull はそれなしで動く
-- **Blocked な pull の明示的リカバリ** — `--stash-local` はローカル変更を安全に退避・復元し、`--discard-local <repo...>` は指定リポジトリだけを対象に確認付きで破棄する
+- **Blocked な pull の明示的リカバリ** — `--stash-local` はローカル変更を安全に退避・復元し、`--discard-local <repo...>` は指定リポジトリだけを対象に確認付きで破棄する。同名リポジトリが複数グループにある場合は `group/repo` を指定する
 - **AIエージェント向けサマリー** — 完了後にプレーンテキストで結果を stdout に出力。そのままAIに貼り付けられる
 - **端末の後始末を強化** — terminal mouse capture を有効化しないため、終了時にマウスイベント断片がシェルへ漏れない
 - **インタラクティブREPL** モード（タブ補完・履歴付き）
@@ -251,9 +251,11 @@ gitpp> exit
 
 - `gitpp pull --stash-local` は未追跡ファイルも一時 stash に含め、fast-forward 後に
   stash pop します。pop が競合した場合は `Failed` として stash を残し、競合解決が
-  必要だと表示します。
-- `gitpp pull --discard-local <repo...>` は enabled リポジトリの正確な名前を1つ以上
-  必須とし、`discard` と入力する確認を要求します。指定したリポジトリだけで
+  必要だと表示します。Git が stash を作れない場合（dirty な submodule など）は、
+  既存の stash とローカル変更をそのまま残します。
+- `gitpp pull --discard-local <repo...>` は enabled リポジトリ名を1つ以上必須とします。
+  basename が一意ならその名前を使え、同名が複数グループにある場合は `group/repo` を
+  指定します。`discard` と入力する確認を要求し、指定したリポジトリだけで
   `git reset --hard HEAD` と `git clean -fd` を実行してから fast-forward を再試行します。
   ローカルコミットは破棄しません。
 

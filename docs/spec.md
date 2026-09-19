@@ -27,7 +27,7 @@ Last updated: 2026-09-19
 | `-j N` / `--jobs N` | Concurrency limit (default: `jobs` value in `gitpp.yaml`, or 20 if unset) |
 | `-q` / `--quiet` | No-TUI mode. Summary to stdout, progress to stderr. Intended for scripts and CI. |
 | `--stash-local` (with `pull`) | Explicitly stash local changes (including untracked files), retry the fast-forward, then pop the stash. A pop conflict is Failed and keeps the stash. |
-| `--discard-local <repo...>` (with `pull`) | Explicitly discard uncommitted changes only in the named enabled repositories, after interactive confirmation, then retry the fast-forward. At least one exact repository name is required. |
+| `--discard-local <repo...>` (with `pull`) | Explicitly discard uncommitted changes only in the named enabled repositories, after interactive confirmation, then retry the fast-forward. At least one unique basename or unambiguous `group/repo` identifier is required. |
 
 `-c`, `-r`, `-j`, and `-q` are global options and may be placed before or after the subcommand.
 
@@ -76,18 +76,21 @@ The default `pull` path above is unchanged and never modifies uncommitted local 
 requires an explicit pull option:
 
 - `gitpp pull --stash-local` checks for local changes after fetching. When changes exist, it
-  runs `git stash push --include-untracked`, retries `git merge --ff-only @{u}`, and runs
-  `git stash pop`. A successful pop restores the working tree; a conflict marks the repository
-  **Failed**, leaves the stash entry in place, and appends
-  `stash pop conflict: stash kept` to the output. A diverged branch remains **Blocked** after
-  the stash is restored.
-- `gitpp pull --discard-local <repo...>` requires one or more exact names derived from the
-  enabled YAML repositories. Unknown or duplicate names are rejected, and the option cannot be
-  combined with `--stash-local`. Before any worker starts, gitpp prints the selected targets and
-  requires the user to type `discard` exactly. For those targets only, it runs
-  `git reset --hard HEAD` and `git clean -fd`, then retries the normal fetch/ff-only pull.
-  Local commits are not reset and non-target repositories use the default safe path. The
-  confirmation is required in quiet mode as well.
+  runs `git stash push --include-untracked`, retries `git merge --ff-only @{u}`, and restores
+  only a stash entry whose `refs/stash` object was created by this invocation. A successful
+  restore removes that entry; a conflict marks the repository **Failed**, leaves the stash entry
+  in place, and appends `stash pop conflict: stash kept` to the output. If Git reports a
+  successful no-op stash (notably for dirty submodules on Git versions without stash recursion),
+  gitpp does not pop any stash and leaves the local changes and existing stash entries alone. A
+  diverged branch remains **Blocked** after recovery.
+- `gitpp pull --discard-local <repo...>` requires one or more names derived from enabled YAML
+  repositories. A unique basename is accepted; if multiple groups contain that basename, the
+  unambiguous `group/repo` identifier is required. Unknown, ambiguous, or duplicate names are
+  rejected, and the option cannot be combined with `--stash-local`. Before any worker starts,
+  gitpp prints the selected targets and requires the user to type `discard` exactly. For those
+  targets only, it runs `git reset --hard HEAD` and `git clean -fd`, then retries the normal
+  fetch/ff-only pull. Local commits are not reset and non-target repositories use the default
+  safe path. The confirmation is required in quiet mode as well.
 
 ### Push Opt-In Design
 

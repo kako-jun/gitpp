@@ -79,7 +79,7 @@ impl GitController {
 
         // Explicit recovery is deliberately opt-in. The default path below is
         // unchanged: it never stashes, resets, or cleans local files.
-        let mut stashed = false;
+        let mut stash_oid: Option<String> = None;
         if recovery == PullRecovery::DiscardLocal {
             let reset_result = self.exec_git(dir, &["reset", "--hard", "HEAD"]);
             all_output.push_str(&reset_result.output);
@@ -106,7 +106,8 @@ impl GitController {
             }
             all_output.push_str("[gitpp] discarded local uncommitted changes\n");
         } else if recovery == PullRecovery::StashLocal && !detached && has_upstream {
-            let status_result = self.exec_git(dir, &["status", "--porcelain"]);
+            let status_result =
+                self.exec_git(dir, &["status", "--porcelain", "--ignore-submodules=none"]);
             all_output.push_str(&status_result.output);
             if !status_result.success {
                 all_output.push_str("[gitpp] stash-local failed while checking local changes\n");
@@ -118,6 +119,12 @@ impl GitController {
                 };
             }
             if !status_result.output.trim().is_empty() {
+                // `git stash push` exits successfully even when there is no
+                // stashable superproject change (for example, a dirty
+                // submodule on Git versions without stash recursion support).
+                // Capture the ref before and after so we never pop a user's
+                // pre-existing stash in that no-op case.
+                let before_stash = self.stash_oid(dir);
                 let stash_result = self.exec_git(
                     dir,
                     &[
@@ -139,8 +146,15 @@ impl GitController {
                         blocked: false,
                     };
                 }
-                stashed = true;
-                all_output.push_str("[gitpp] stashed local changes\n");
+                let after_stash = self.stash_oid(dir);
+                if after_stash.is_some() && after_stash != before_stash {
+                    stash_oid = after_stash;
+                    all_output.push_str("[gitpp] stashed local changes\n");
+                } else {
+                    all_output.push_str(
+                        "[gitpp] no stash created; preserving existing stash and local changes\n",
+                    );
+                }
             }
         }
 
@@ -165,8 +179,22 @@ impl GitController {
             }
         }
 
-        if stashed {
-            let pop_result = self.exec_git(dir, &["stash", "pop"]);
+        if let Some(created_stash_oid) = stash_oid {
+            // `stash@{0}` is the newly-created entry only after verifying that
+            // the top ref still resolves to the captured object. Never use a
+            // bare `stash pop`, which could consume an unrelated user stash.
+            if self.stash_oid(dir).as_deref() != Some(created_stash_oid.as_str()) {
+                all_output.push_str(
+                    "[gitpp] stash reference changed; stash kept and local changes were not restored\n",
+                );
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            let pop_result = self.exec_git(dir, &["stash", "pop", "stash@{0}"]);
             all_output.push_str(&pop_result.output);
             if !pop_result.success {
                 all_output.push_str(
@@ -342,6 +370,11 @@ impl GitController {
             had_changes,
             ..result
         }
+    }
+
+    fn stash_oid(&self, dir: &Path) -> Option<String> {
+        let result = self.exec_git(dir, &["rev-parse", "--verify", "refs/stash"]);
+        result.success.then(|| result.output.trim().to_string())
     }
 
     pub fn git_gc(&self, dir: &Path) -> GitResult {
@@ -986,6 +1019,56 @@ mod tests {
             "a successfully popped stash should be removed"
         );
         assert!(result.output.contains("restored stashed local changes"));
+    }
+
+    #[test]
+    fn stash_local_does_not_pop_existing_stash_when_submodule_stash_is_a_noop() {
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin_with_submodule(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // Initialize the submodule, then create a user-owned stash in the
+        // superproject. The only later change is inside the submodule. On Git
+        // versions where `git stash push` cannot recurse into submodules, the
+        // stash command is a successful no-op; gitpp must not pop the user's
+        // existing entry in response.
+        unsafe {
+            std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        }
+        git(&work, &["submodule", "update", "--init", "--recursive"]);
+        fs::write(work.join("file.txt"), "user stash\n").unwrap();
+        git(&work, &["stash", "push", "-m", "user stash"]);
+        let before_stash = GitController::new().git_stash_list(&work).output;
+        fs::write(work.join("mysub").join("sub.txt"), "dirty submodule\n").unwrap();
+
+        let result = GitController::new().git_pull_with_recovery(&work, PullRecovery::StashLocal);
+        unsafe {
+            std::env::remove_var("GIT_ALLOW_PROTOCOL");
+        }
+
+        assert!(
+            result.success,
+            "a no-op stash must not fail pull: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("no stash created"),
+            "the no-op stash must be explicit in output: {}",
+            result.output
+        );
+        assert_eq!(
+            GitController::new().git_stash_list(&work).output,
+            before_stash,
+            "the user's pre-existing stash must not be popped"
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("mysub").join("sub.txt")).unwrap(),
+            "dirty submodule\n",
+            "dirty submodule content must remain untouched"
+        );
     }
 
     #[test]

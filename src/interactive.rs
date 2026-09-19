@@ -175,6 +175,13 @@ fn show_help() {
     println!("  \x1b[1;33mexit\x1b[0m, \x1b[1;33mquit\x1b[0m         Exit interactive mode");
     println!("\n\x1b[1;36mOptions:\x1b[0m");
     println!("  \x1b[1;33m-j N\x1b[0m, \x1b[1;33m--jobs N\x1b[0m     Max parallel jobs (default: from gitpp.yaml, or 20)");
+    println!(
+        "  \x1b[1;33mpull --stash-local\x1b[0m     Stash local changes, pull, then restore them"
+    );
+    println!(
+        "  \x1b[1;33mpull --discard-local <repo...>\x1b[0m  Confirm, discard named local changes"
+    );
+    println!("                           Use group/repo when a basename is ambiguous");
     println!("\n\x1b[1;36mTips:\x1b[0m");
     println!("  - Use \x1b[1;33mTab\x1b[0m for auto-completion");
     println!("  - Use \x1b[1;33m↑/↓\x1b[0m arrows for command history");
