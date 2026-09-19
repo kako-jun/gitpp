@@ -57,12 +57,16 @@ Pull is designed never to abort a batch run on recoverable repository states. It
    - **Upstream present** → `git merge --ff-only @{u}` is attempted.
      - Success → reported as Updated when the tree actually moved (not "Already up to date").
      - Failure (diverged / non-fast-forward, or local changes blocking the update) → **not** an error.
-       The working tree is never reset and local changes are never discarded; the reason is reported and the repo is left as Unchanged.
+       The working tree is never reset and local changes are never discarded; the reason is reported and
+       the repo is marked **Blocked** — distinct from Unchanged, so it can be told apart from a repo that
+       truly had nothing new to pull.
 4. `git submodule update --init --recursive` synchronizes submodules.
    A failure here is recorded as a warning in the output but never changes the pull result.
 
-As a result, only a failed fetch produces Failed. Diverged, detached, no-upstream, and dirty repositories
-complete as Unchanged with an explanatory message in the output, so a batch pull never collapses into "lots of errors".
+As a result, only a failed fetch produces Failed. Detached HEAD and no-upstream branches (nothing to merge)
+complete as Unchanged. A diverged branch or a dirty working tree that blocks the fast-forward completes as
+Blocked, with an explanatory message in the output, so a batch pull never collapses into "lots of errors"
+while still flagging the repos that need manual follow-up (commit/stash locally, or resolve the divergence).
 
 ### Push Opt-In Design
 
@@ -228,6 +232,7 @@ Pressing `q` at any time during execution exits immediately.
 | Running | ▶ | Yellow | In progress |
 | Updated | ✓ | Green | Completed with changes |
 | Unchanged | ─ | DarkGray | Completed with no changes |
+| Blocked | ⚠ | Orange | pull only: ff-only merge skipped (diverged branch or dirty working tree) |
 | Failed | ✗ | Red | Encountered an error |
 
 ### Error Detection
@@ -237,7 +242,7 @@ Pull is an exception: only a failed `git fetch --prune` marks it Failed (see "Ro
 Diverged, detached, no-upstream, and dirty repositories complete with `success: true`.
 
 `GitResult` includes a `had_changes` field that distinguishes Updated from Unchanged:
-- **pull**: `had_changes` is true when a fast-forward actually moved the branch, or when the submodule update checked something out. A no-op fast-forward ("Already up to date"), a skipped merge (no upstream / detached / diverged / dirty), and an empty submodule update all yield Unchanged.
+- **pull**: `had_changes` is true when a fast-forward actually moved the branch, or when the submodule update checked something out. A no-op fast-forward ("Already up to date") and an empty submodule update yield Unchanged. A skipped merge due to no upstream or a detached HEAD also yields Unchanged (nothing to merge). A skipped merge due to divergence or a dirty working tree yields **Blocked** instead (see `blocked` below), never Unchanged.
 - **clone**: `had_changes` is true when the clone succeeds (already-cloned repos are detected before calling git). Submodules are fetched via `--recurse-submodules`.
 - **push**: `had_changes` is true when `git commit` succeeds (i.e. there was something to commit and push)
 - **status**: `had_changes` is true when there are uncommitted changes (non-empty output)
@@ -247,6 +252,11 @@ Diverged, detached, no-upstream, and dirty repositories complete with `success: 
 - **switch**: `had_changes` is true when the branch was actually changed; false if already on main/master
 - **stash list**: `had_changes` is true when stash entries exist
 - **gc**: `had_changes` is always false
+
+`GitResult` also includes a `blocked` field, which is true only for **pull**, and only when the
+ff-only merge was skipped because the branch diverged or the working tree had uncommitted local
+changes (see "Robust Pull"). Every other pull outcome, and every other command, always reports
+`blocked: false`. This field drives the `Blocked` status shown in the TUI and summaries.
 
 For push, the steps run in sequence: add → commit → push. A failure at any step skips the remaining steps.
 If `git commit` exits with a non-zero code due to "nothing to commit", it is treated as a success
@@ -263,12 +273,12 @@ The format is suitable for pasting directly into a chat with an AI agent.
 
 **All succeeded:**
 ```
-Total: 101 | Done: 101 (Updated: 3 / Unchanged: 98 / Failed: 0 / Untracked: 0)
+Total: 101 | Done: 101 (Updated: 3 / Unchanged: 98 / Blocked: 0 / Failed: 0 / Untracked: 0)
 ```
 
 **With failures:**
 ```
-Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3 / Untracked: 0)
+Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Blocked: 0 / Failed: 3 / Untracked: 0)
 
 --- freeza (/Users/kako-jun/repos/private/freeza) ---
   error: Your local changes to the following files would be overwritten by merge:
@@ -280,6 +290,16 @@ Total: 101 | Done: 101 (Updated: 95 / Unchanged: 3 / Failed: 3 / Untracked: 0)
 
 For each failed repository, the name, full path, and git output are shown.
 For push failures, the combined output of all steps (add, commit, push) is included.
+
+**pull, with a blocked repo:**
+```
+Total: 155 | Done: 155 (Updated: 12 / Unchanged: 141 / Blocked: 2 / Failed: 0 / Untracked: 0)
+```
+A `Blocked` count greater than zero means at least one repository has upstream commits that
+could not be fast-forwarded (diverged branch or uncommitted local changes). Nothing was
+discarded — the repo needs a manual look (`git status` / `git pull` inside it). Blocked repos
+are also reported individually as they finish, both in the TUI and in `--quiet` mode
+(`[pull] {name}... blocked`), so they can be identified without waiting for the summary.
 
 ### Untracked Repository Detection
 

@@ -38,7 +38,7 @@ not a global config file.
 
 - **Parallel clone/pull/push** with configurable concurrency (`jobs`, default 20)
 - **7 subcommands beyond clone/pull/push** — status, diff, fetch, branch, switch, stash list, gc
-- **Full-screen TUI** (ratatui) with 6-state icons (Waiting/Running/Updated/Unchanged/Failed/Untracked)
+- **Full-screen TUI** (ratatui) with 7-state icons (Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked)
 - **Per-directory git config** — `user.name`, `pull.rebase`, and any other git config key,
   applied locally to every repo in the group
 - **Push opt-in** — push is disabled unless `comments.default` is explicitly set; clone/pull
@@ -86,7 +86,7 @@ A full-screen TUI shows real-time progress for every repository:
 │  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -110,7 +110,7 @@ The detail pane is shown by default. Press Enter to toggle it off/on:
 │                                │   (7/12) 1.2 MiB            │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
-│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Failed: 2 / Untracked: 2) │
+│ Total: 103 | Done: 52 (Updated: 48 / Unchanged: 0 / Blocked: 0 / Failed: 2 / Untracked: 2) │
 └──────────────────────────────────────────────────────────────┘
 ```
 
