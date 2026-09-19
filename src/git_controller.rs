@@ -301,7 +301,14 @@ mod tests {
     use super::*;
     use std::fs;
     use std::process::Command;
+    use std::sync::Mutex;
     use tempfile::TempDir;
+
+    /// `GIT_ALLOW_PROTOCOL` is process-wide env state, but cargo test runs tests
+    /// in parallel threads within one process. Any test that reads or relies on
+    /// the local-path (`file://`) submodule transport being allowed/blocked must
+    /// hold this lock for its whole duration so the two cases never interleave.
+    static SUBMODULE_PROTOCOL_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     /// Run a raw git command in `dir` with a deterministic identity / config so
     /// fixtures never depend on the host's global git settings, and never touch
@@ -651,6 +658,12 @@ mod tests {
     /// `transport 'file' not allowed`. That failure must NOT fail the pull.
     #[test]
     fn pull_submodule_failure_still_succeeds() {
+        // Must not overlap with a test that sets GIT_ALLOW_PROTOCOL=file, or the
+        // submodule clone below would unexpectedly succeed. See lock doc comment.
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
         let tmp = TempDir::new().unwrap();
         let origin = seed_origin(tmp.path());
 
@@ -704,6 +717,101 @@ mod tests {
         assert!(
             result.output.contains("warning: submodule update failed"),
             "a failed submodule sync should be reported as a warning: {}",
+            result.output
+        );
+    }
+
+    // --- regression: blocked and had_changes can both be true ---------------
+
+    /// A submodule can be checked out for the first time (`had_changes: true`)
+    /// in the very same pull where the superproject's ff-only merge is skipped
+    /// by a dirty working tree (`blocked: true`). Both flags must come back
+    /// true together — callers (e.g. main.rs's status mapping) must give
+    /// `blocked` priority over `had_changes`, never let one mask the other.
+    #[test]
+    fn pull_blocked_superproject_with_submodule_checkout_sets_both_flags() {
+        // Must not overlap with `pull_submodule_failure_still_succeeds`, which
+        // relies on the local-path submodule clone being blocked. See lock doc
+        // comment on SUBMODULE_PROTOCOL_ENV_LOCK.
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin(tmp.path());
+
+        // Build a second bare repo to act as a submodule source.
+        let sub_origin = tmp.path().join("sub-origin.git");
+        git(
+            tmp.path(),
+            &["init", "--bare", sub_origin.to_str().unwrap()],
+        );
+        let sub_seed = tmp.path().join("sub-seed");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                sub_origin.to_str().unwrap(),
+                sub_seed.to_str().unwrap(),
+            ],
+        );
+        fs::write(sub_seed.join("sub.txt"), "sub\n").unwrap();
+        git(&sub_seed, &["add", "-A"]);
+        git(&sub_seed, &["commit", "-m", "sub seed"]);
+        git(&sub_seed, &["push", "origin", "main"]);
+
+        // Register the submodule in origin via a throwaway clone.
+        let setup = tmp.path().join("setup");
+        git(
+            tmp.path(),
+            &["clone", origin.to_str().unwrap(), setup.to_str().unwrap()],
+        );
+        git(
+            &setup,
+            &["submodule", "add", sub_origin.to_str().unwrap(), "mysub"],
+        );
+        git(&setup, &["commit", "-m", "add submodule"]);
+        git(&setup, &["push", "origin", "main"]);
+
+        // Work tree on the commit that introduces the submodule (not yet checked out).
+        let work = clone_work(tmp.path(), &origin);
+
+        // origin advances further on the superproject (unrelated to the submodule);
+        // locally we leave an uncommitted edit that blocks the ff-only merge.
+        advance_origin(tmp.path(), &origin);
+        let dirty = "line1\nUNCOMMITTED LOCAL EDIT\n";
+        fs::write(work.join("file.txt"), dirty).unwrap();
+
+        // Unlike `pull_submodule_failure_still_succeeds`, this test needs the
+        // submodule sync to actually SUCCEED (so it produces a real checkout and
+        // `had_changes: true`). The production `exec_git` path doesn't pass
+        // `protocol.file.allow=always` the way the fixture `git()` helper does
+        // (repo-local config is intentionally NOT trusted by git for this), so
+        // allow local-path ("file://") transport for the duration of this test
+        // via the env var, guarded by SUBMODULE_PROTOCOL_ENV_LOCK above.
+        // SAFETY: single-threaded w.r.t. env access — serialized by the mutex
+        // held for this test's whole body, and restored before it's released.
+        unsafe {
+            std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        }
+        let result = GitController::new().git_pull(&work);
+        unsafe {
+            std::env::remove_var("GIT_ALLOW_PROTOCOL");
+        }
+
+        assert!(
+            result.success,
+            "a blocked ff-only merge is reported, not a hard failure: {}",
+            result.output
+        );
+        assert!(
+            result.blocked,
+            "the dirty working tree must still block the ff-only merge: {}",
+            result.output
+        );
+        assert!(
+            result.had_changes,
+            "the submodule's first checkout must still be recorded as a change: {}",
             result.output
         );
     }

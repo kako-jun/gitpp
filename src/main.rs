@@ -731,20 +731,25 @@ fn spawn_pull_workers(
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             if result.success {
-                if result.had_changes {
-                    update_repo_status(
-                        &repos_handle,
-                        &repo_name,
-                        RepoStatus::Updated,
-                        "Updated",
-                        100,
-                    );
-                } else if result.blocked {
+                // `blocked` takes priority over `had_changes`: a submodule can be
+                // checked out for the first time (had_changes: true) in the same
+                // pull where the main branch's ff-only merge was skipped
+                // (blocked: true). The user still needs to know the branch itself
+                // didn't update, so Blocked must not be masked by Updated.
+                if result.blocked {
                     update_repo_status(
                         &repos_handle,
                         &repo_name,
                         RepoStatus::Blocked,
                         "Blocked",
+                        100,
+                    );
+                } else if result.had_changes {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Updated,
+                        "Updated",
                         100,
                     );
                 } else {
