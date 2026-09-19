@@ -398,6 +398,50 @@ mod tests {
         format!("{n}")
     }
 
+    /// Build a bare origin whose single commit registers a submodule (backed
+    /// by its own bare origin), so a fresh plain `git clone` of it has the
+    /// submodule declared as a gitlink but not yet checked out on disk.
+    /// Shared setup for the "submodule init happens alongside an otherwise
+    /// unremarkable merge phase" tests below.
+    fn seed_origin_with_submodule(parent: &Path) -> std::path::PathBuf {
+        let origin = parent.join("origin.git");
+        git(parent, &["init", "--bare", origin.to_str().unwrap()]);
+
+        let seed = parent.join("seed");
+        git(
+            parent,
+            &["clone", origin.to_str().unwrap(), seed.to_str().unwrap()],
+        );
+        fs::write(seed.join("file.txt"), "line1\n").unwrap();
+        git(&seed, &["add", "-A"]);
+        git(&seed, &["commit", "-m", "seed"]);
+
+        let sub_origin = parent.join("sub-origin.git");
+        git(parent, &["init", "--bare", sub_origin.to_str().unwrap()]);
+        let sub_seed = parent.join("sub-seed");
+        git(
+            parent,
+            &[
+                "clone",
+                sub_origin.to_str().unwrap(),
+                sub_seed.to_str().unwrap(),
+            ],
+        );
+        fs::write(sub_seed.join("sub.txt"), "sub\n").unwrap();
+        git(&sub_seed, &["add", "-A"]);
+        git(&sub_seed, &["commit", "-m", "sub seed"]);
+        git(&sub_seed, &["push", "origin", "main"]);
+
+        git(
+            &seed,
+            &["submodule", "add", sub_origin.to_str().unwrap(), "mysub"],
+        );
+        git(&seed, &["commit", "-m", "add submodule"]);
+        git(&seed, &["push", "origin", "main"]);
+
+        origin
+    }
+
     // --- D1: fetch failure is the only Failed outcome -----------------------
 
     #[test]
@@ -625,6 +669,184 @@ mod tests {
         );
     }
 
+    // --- decision table gaps: submodule init alongside an unremarkable merge phase ---
+
+    /// A branch with no upstream still reports Updated (via had_changes) when
+    /// the submodule is checked out for the first time, even though the
+    /// merge phase itself never runs and can't set `ff_applied`.
+    #[test]
+    fn pull_no_upstream_with_submodule_init_is_updated() {
+        // Needs the submodule clone to actually succeed. See lock doc comment
+        // on SUBMODULE_PROTOCOL_ENV_LOCK.
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin_with_submodule(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // A fresh local branch has no tracking ref, so the merge phase is
+        // skipped entirely — only fetch + submodule sync run.
+        git(&work, &["checkout", "-b", "no-upstream"]);
+
+        // SAFETY: single-threaded w.r.t. env access — serialized by the mutex
+        // held for this test's whole body, and restored before it's released.
+        unsafe {
+            std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        }
+        let result = GitController::new().git_pull(&work);
+        unsafe {
+            std::env::remove_var("GIT_ALLOW_PROTOCOL");
+        }
+
+        assert!(result.success);
+        assert!(
+            result.had_changes,
+            "the submodule's first checkout must count as a change even with no upstream: {}",
+            result.output
+        );
+        assert!(
+            !result.blocked,
+            "a no-upstream pull is never blocked: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("fetched only (no upstream)"),
+            "no-upstream branch should still be fetched-only: {}",
+            result.output
+        );
+    }
+
+    /// A ff-only merge that reports "Already up to date" (no commits moved)
+    /// still reports Updated when the submodule is checked out for the
+    /// first time in that same pull.
+    #[test]
+    fn pull_already_up_to_date_with_submodule_change_is_updated() {
+        // Needs the submodule clone to actually succeed. See lock doc comment
+        // on SUBMODULE_PROTOCOL_ENV_LOCK.
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin_with_submodule(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // SAFETY: single-threaded w.r.t. env access — serialized by the mutex
+        // held for this test's whole body, and restored before it's released.
+        unsafe {
+            std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        }
+        let result = GitController::new().git_pull(&work);
+        unsafe {
+            std::env::remove_var("GIT_ALLOW_PROTOCOL");
+        }
+
+        assert!(result.success);
+        assert!(
+            result.had_changes,
+            "the submodule's first checkout must count as a change even when the branch is already up to date: {}",
+            result.output
+        );
+        assert!(!result.blocked);
+        assert!(
+            result.output.contains("Already up to date"),
+            "the merge phase should still report up-to-date: {}",
+            result.output
+        );
+    }
+
+    // --- diverged + submodule failure: blocked must survive a second warning ---
+
+    /// A diverged branch (blocked) and a failing submodule sync (warning) can
+    /// happen in the same pull. `blocked` must stay true and both markers
+    /// must appear in the output — neither condition should suppress the
+    /// other's report.
+    #[test]
+    fn pull_diverged_with_submodule_failure_is_blocked() {
+        // Must not overlap with a test that sets GIT_ALLOW_PROTOCOL=file, or
+        // the submodule clone below would unexpectedly succeed. See lock doc
+        // comment on SUBMODULE_PROTOCOL_ENV_LOCK.
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin_with_submodule(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // origin gets an unrelated commit; local gets a different commit ->
+        // non-FF divergence blocks the ff-only merge.
+        advance_origin(tmp.path(), &origin);
+        fs::write(work.join("local.txt"), "local change\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-m", "local commit B"]);
+
+        let result = GitController::new().git_pull(&work);
+
+        assert!(result.success, "divergence is reported, not a hard failure");
+        assert!(
+            result.blocked,
+            "the diverged branch must still be reported as Blocked despite the submodule warning: {}",
+            result.output
+        );
+        assert!(
+            !result.had_changes,
+            "nothing actually changed: the merge was skipped and the submodule sync failed: {}",
+            result.output
+        );
+        assert!(
+            result
+                .output
+                .contains("fast-forward skipped (diverged or local changes)"),
+            "output must carry the diverged marker: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("warning: submodule update failed"),
+            "output must also carry the submodule failure warning: {}",
+            result.output
+        );
+    }
+
+    // --- idempotence: re-pulling an unresolved divergence stays blocked -----
+
+    /// Pulling a diverged branch twice without resolving the divergence must
+    /// report Blocked both times — the second pull isn't a no-op fetch, it
+    /// hits the exact same ff-only skip again.
+    #[test]
+    fn pull_diverged_repo_pulled_twice_stays_blocked() {
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        advance_origin(tmp.path(), &origin);
+        fs::write(work.join("local.txt"), "local change\n").unwrap();
+        git(&work, &["add", "-A"]);
+        git(&work, &["commit", "-m", "local commit B"]);
+        let before = head_sha(&work);
+
+        let git_controller = GitController::new();
+
+        let first = git_controller.git_pull(&work);
+        assert!(first.blocked, "first pull of a diverged branch is blocked");
+        assert!(!first.had_changes);
+
+        let second = git_controller.git_pull(&work);
+        assert!(
+            second.blocked,
+            "a second pull without resolving the divergence must stay blocked: {}",
+            second.output
+        );
+        assert!(!second.had_changes);
+        assert_eq!(
+            before,
+            head_sha(&work),
+            "local commit B must survive two blocked pulls untouched"
+        );
+    }
+
     // --- clone -------------------------------------------------------------
 
     #[test]
@@ -713,6 +935,10 @@ mod tests {
         assert!(
             !result.blocked,
             "a submodule sync failure is not a blocked ff-only merge"
+        );
+        assert!(
+            !result.had_changes,
+            "a failed submodule sync must not be counted as a change"
         );
         assert!(
             result.output.contains("warning: submodule update failed"),
