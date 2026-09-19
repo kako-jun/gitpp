@@ -4,6 +4,10 @@
 
 ### Added
 
+- **aarch64 Linux release assets.** Tagged releases now include GNU libc and musl
+  binaries (`gitpp-linux-aarch64` and `gitpp-linux-aarch64-musl`) alongside the
+  existing platform assets.
+
 - **Explicit recovery for blocked pulls.** `gitpp pull --stash-local` temporarily stashes
   recoverable local changes and restores only a stash entry created by that invocation. A stash
   pop conflict is reported as Failed while the stash is retained. `gitpp pull --discard-local

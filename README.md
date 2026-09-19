@@ -141,6 +141,12 @@ gitpp pull: 98/101 succeeded, 3 failed
 cargo install gitpp
 ```
 
+Prebuilt binaries for tagged releases are available on the
+[GitHub Releases page](https://github.com/kako-jun/gitpp/releases). Linux ARM64 users can
+choose either `gitpp-linux-aarch64` (GNU libc) or `gitpp-linux-aarch64-musl` (static musl).
+The other release assets are available for x86_64 Linux (GNU libc and musl), x86_64 and
+ARM64 macOS, and x86_64 Windows.
+
 Or build from source:
 
 ```bash
