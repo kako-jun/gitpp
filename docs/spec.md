@@ -26,6 +26,8 @@ Last updated: 2026-09-19
 | `-r PATH` / `--root PATH` | Root directory for repository checkout (default: current directory) |
 | `-j N` / `--jobs N` | Concurrency limit (default: `jobs` value in `gitpp.yaml`, or 20 if unset) |
 | `-q` / `--quiet` | No-TUI mode. Summary to stdout, progress to stderr. Intended for scripts and CI. |
+| `--stash-local` (with `pull`) | Explicitly stash local changes (including untracked files), retry the fast-forward, then pop the stash. A pop conflict is Failed and keeps the stash. |
+| `--discard-local <repo...>` (with `pull`) | Explicitly discard uncommitted changes only in the named enabled repositories, after interactive confirmation, then retry the fast-forward. At least one exact repository name is required. |
 
 `-c`, `-r`, `-j`, and `-q` are global options and may be placed before or after the subcommand.
 
@@ -34,7 +36,7 @@ Last updated: 2026-09-19
 | Command | Git commands executed | Notes |
 |---|---|---|
 | clone | `git clone <remote> -b <branch> --recurse-submodules` | Run inside the group subdirectory; submodules are fetched too |
-| pull | `git fetch --prune` → `git merge --ff-only @{u}` → `git submodule update --init --recursive` | See "Robust Pull" below. Only a failed fetch is reported as Failed |
+| pull | `git fetch --prune` → `git merge --ff-only @{u}` → `git submodule update --init --recursive` | See "Robust Pull" below. Only a failed fetch is reported as Failed in the default mode |
 | push | `git add -A` → `git commit -m "<msg>"` → `git push` | Commit message is fixed to `comments.default` |
 | status | `git status --porcelain` | Read-only; no config applied |
 | diff | `git diff --stat HEAD` | Read-only; staged + unstaged; no config applied |
@@ -67,6 +69,25 @@ As a result, only a failed fetch produces Failed. Detached HEAD and no-upstream 
 complete as Unchanged. A diverged branch or a dirty working tree that blocks the fast-forward completes as
 Blocked, with an explanatory message in the output, so a batch pull never collapses into "lots of errors"
 while still flagging the repos that need manual follow-up (commit/stash locally, or resolve the divergence).
+
+### Explicit local recovery modes
+
+The default `pull` path above is unchanged and never modifies uncommitted local work. Recovery
+requires an explicit pull option:
+
+- `gitpp pull --stash-local` checks for local changes after fetching. When changes exist, it
+  runs `git stash push --include-untracked`, retries `git merge --ff-only @{u}`, and runs
+  `git stash pop`. A successful pop restores the working tree; a conflict marks the repository
+  **Failed**, leaves the stash entry in place, and appends
+  `stash pop conflict: stash kept` to the output. A diverged branch remains **Blocked** after
+  the stash is restored.
+- `gitpp pull --discard-local <repo...>` requires one or more exact names derived from the
+  enabled YAML repositories. Unknown or duplicate names are rejected, and the option cannot be
+  combined with `--stash-local`. Before any worker starts, gitpp prints the selected targets and
+  requires the user to type `discard` exactly. For those targets only, it runs
+  `git reset --hard HEAD` and `git clean -fd`, then retries the normal fetch/ff-only pull.
+  Local commits are not reset and non-target repositories use the default safe path. The
+  confirmation is required in quiet mode as well.
 
 ### Push Opt-In Design
 

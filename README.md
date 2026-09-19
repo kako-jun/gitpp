@@ -43,6 +43,9 @@ not a global config file.
   applied locally to every repo in the group
 - **Push opt-in** — push is disabled unless `comments.default` is explicitly set; clone/pull
   work without it
+- **Explicit blocked-pull recovery** — `--stash-local` safely stashes and restores local
+  changes, while `--discard-local <repo...>` is limited to named repositories and requires
+  an interactive confirmation
 - **AI-friendly summary** — plain-text output after completion, paste directly to your AI
   assistant for diagnosis
 - **Clean terminal teardown** — exits without enabling terminal mouse capture, avoiding stray mouse-report bytes in the shell prompt
@@ -58,6 +61,8 @@ Put a `gitpp.yaml` in your repos directory, then:
 ```bash
 gitpp clone        # Clone all repos in parallel
 gitpp pull         # Pull all repos in parallel
+gitpp pull --stash-local  # Stash local changes, fast-forward, then restore them
+gitpp pull --discard-local repo-a repo-b  # Confirm, discard local changes only in these repos
 gitpp push         # Add, commit, push all repos in parallel
 gitpp status       # Show uncommitted changes across all repos
 gitpp diff         # Show staged+unstaged diff stats
@@ -201,6 +206,8 @@ A repo without local config will refuse to commit, which is the correct fail-saf
 ```bash
 # One-shot mode
 gitpp pull              # Pull all enabled repos
+gitpp pull --stash-local  # Stash local changes, fast-forward, then restore them
+gitpp pull --discard-local repo-a repo-b  # Confirm, discard local changes only in these repos
 gitpp push -j 10        # Push with max 10 parallel jobs
 gitpp clone             # Clone (skips already-cloned repos)
 
@@ -231,6 +238,22 @@ gitpp
 gitpp> pull
 gitpp> exit
 ```
+
+### Recovering blocked pulls
+
+Plain `gitpp pull` is always safe: a diverged branch or dirty working tree is reported as
+`Blocked`, and no local work is changed. Recovery is opt-in:
+
+- `gitpp pull --stash-local` includes untracked files in a temporary stash, retries the
+  fast-forward, and pops the stash afterward. If the pop conflicts, gitpp reports `Failed`,
+  keeps the stash, and tells you to resolve the conflict before retrying.
+- `gitpp pull --discard-local <repo...>` requires one or more exact enabled repository names.
+  It asks you to type `discard`, then runs `git reset --hard HEAD` and `git clean -fd` only for
+  those named repositories before retrying the fast-forward. Other repositories use the normal
+  safe pull path. Local commits are never discarded by this option.
+
+The discard confirmation is required in quiet mode too; pipe the exact word `discard` from a
+trusted interactive workflow if automation is intentional.
 
 ### TUI Controls
 

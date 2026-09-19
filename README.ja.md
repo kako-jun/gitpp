@@ -39,6 +39,7 @@ gitpp は逆の発想をとる。`~/.gitconfig` のグローバル設定には�
 - **フルスクリーンTUI**（ratatui）— 7状態表示（Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked）とリアルタイムプログレス
 - **場所ごとに git config を分離** — `user.name`, `pull.rebase` など任意の git config キーをグループ内の全リポジトリにローカル設定
 - **push はオプトイン制** — `comments.default` を明示的に設定しない限り push は無効。clone/pull はそれなしで動く
+- **Blocked な pull の明示的リカバリ** — `--stash-local` はローカル変更を安全に退避・復元し、`--discard-local <repo...>` は指定リポジトリだけを対象に確認付きで破棄する
 - **AIエージェント向けサマリー** — 完了後にプレーンテキストで結果を stdout に出力。そのままAIに貼り付けられる
 - **端末の後始末を強化** — terminal mouse capture を有効化しないため、終了時にマウスイベント断片がシェルへ漏れない
 - **インタラクティブREPL** モード（タブ補完・履歴付き）
@@ -68,6 +69,8 @@ gitpp は逆の発想をとる。`~/.gitconfig` のグローバル設定には�
 ```bash
 gitpp clone        # 全リポジトリを並列 clone
 gitpp pull         # 全リポジトリを並列 pull
+gitpp pull --stash-local  # ローカル変更を stash → fast-forward → 復元
+gitpp pull --discard-local repo-a repo-b  # 確認後、この2リポジトリだけローカル変更を破棄
 gitpp push         # 全リポジトリを並列 add → commit → push
 gitpp status       # 未コミット変更の検出
 gitpp diff         # staged+unstaged の差分サマリー
@@ -207,6 +210,8 @@ repos:
 ```bash
 # ワンショットモード
 gitpp pull              # 全 enabled リポジトリを pull
+gitpp pull --stash-local  # ローカル変更を stash → fast-forward → 復元
+gitpp pull --discard-local repo-a repo-b  # 確認後、この2リポジトリだけローカル変更を破棄
 gitpp push -j 10        # 最大10並列で push
 gitpp clone             # clone（既に clone 済みのリポジトリはスキップ）
 
@@ -237,6 +242,23 @@ gitpp
 gitpp> pull
 gitpp> exit
 ```
+
+### Blocked な pull の復旧
+
+通常の `gitpp pull` は常に安全です。ブランチの分岐や作業ツリーの変更で fast-forward
+できない場合は `Blocked` と表示し、ローカル作業を変更しません。復旧機能は明示的に
+指定した場合だけ動作します。
+
+- `gitpp pull --stash-local` は未追跡ファイルも一時 stash に含め、fast-forward 後に
+  stash pop します。pop が競合した場合は `Failed` として stash を残し、競合解決が
+  必要だと表示します。
+- `gitpp pull --discard-local <repo...>` は enabled リポジトリの正確な名前を1つ以上
+  必須とし、`discard` と入力する確認を要求します。指定したリポジトリだけで
+  `git reset --hard HEAD` と `git clean -fd` を実行してから fast-forward を再試行します。
+  ローカルコミットは破棄しません。
+
+破棄確認は quiet モードでも省略されません。自動化する場合も、信頼できる入力から
+`discard` という語を明示的に渡してください。
 
 ### TUI 操作
 
