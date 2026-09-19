@@ -74,7 +74,7 @@ A full-screen TUI shows real-time progress for every repository:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:issue  q:quit │
 │        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
@@ -100,7 +100,7 @@ The detail pane is shown by default. Press Enter to toggle it off/on:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:err  q:quit  │
+│ gitpp  j/k:move  Enter:detail  h/l:scroll  n/N:issue  q:quit │
 │        g/G:top/bottom  y:copy  Esc:close pane                │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
@@ -238,7 +238,7 @@ gitpp> exit
 |-----|--------|
 | `j` / `k` / `↑` / `↓` | Navigate repos |
 | `g` / `G` | Jump to top / bottom |
-| `n` / `N` | Jump to next / previous error |
+| `n` / `N` | Jump to next / previous problem repo (Failed or Blocked) |
 | `Enter` | Toggle detail pane (shown by default) |
 | `h` / `l` / `←` / `→` | Scroll detail pane (3 lines at a time) |
 | `y` | Copy selected repo's output to clipboard |
