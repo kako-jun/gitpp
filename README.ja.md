@@ -145,6 +145,12 @@ gitpp pull: 98/101 succeeded, 3 failed
 cargo install gitpp
 ```
 
+タグ付きリリースのビルド済みバイナリは
+[GitHub Releases](https://github.com/kako-jun/gitpp/releases) から取得できます。
+Linux ARM64 では `gitpp-linux-aarch64`（GNU libc）または
+`gitpp-linux-aarch64-musl`（静的リンクの musl）を選べます。ほかに x86_64 Linux
+（GNU libc / musl）、x86_64 / ARM64 macOS、x86_64 Windows 向けを提供しています。
+
 ソースからビルドする場合：
 
 ```bash
