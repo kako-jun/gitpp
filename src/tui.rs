@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Padding, Paragraph, Wrap},
     Frame, Terminal,
 };
 use std::collections::{HashMap, HashSet};
@@ -17,6 +17,10 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+const PANE_PADDING: u16 = 1;
+const PANE_BORDER_SIZE: u16 = 2;
+const PANE_CONTENT_OVERHEAD: u16 = PANE_BORDER_SIZE + PANE_PADDING * 2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RepoStatus {
@@ -734,7 +738,10 @@ impl TuiApp {
 
         // Each repo takes 2 lines (status + progress bar), no blank line between
         let lines_per_repo = 2;
-        let visible_height = area.height.saturating_sub(2) as usize; // subtract borders
+        // A pane has two border cells and one padding cell on each vertical side.
+        // Keep this calculation in sync with the Block below; saturating_sub keeps
+        // a tiny terminal from underflowing while the pane has no content area.
+        let visible_height = area.height.saturating_sub(PANE_CONTENT_OVERHEAD) as usize;
         let visible_repos = visible_height / lines_per_repo;
 
         // Adjust scroll_offset to keep selected visible
@@ -866,6 +873,7 @@ impl TuiApp {
         let paragraph = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
+                .padding(Padding::uniform(PANE_PADDING))
                 .title(scroll_info)
                 .style(Style::default()),
         );
@@ -903,6 +911,7 @@ impl TuiApp {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
+                    .padding(Padding::uniform(PANE_PADDING))
                     .title(title)
                     .style(Style::default()),
             )
@@ -942,6 +951,7 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
 mod tests {
     use super::{update_repo_status, RepoStatus, TuiApp};
     use jiwa::Rgb;
+    use ratatui::{backend::TestBackend, Terminal};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
@@ -978,6 +988,39 @@ mod tests {
     fn sanitize_summary_text_keeps_plain_text_after_unknown_escape() {
         let text = "before\x1bXafter";
         assert_eq!(TuiApp::sanitize_summary_text(text), "beforeXafter");
+    }
+
+    #[test]
+    fn pane_body_has_one_cell_inner_padding() {
+        let mut app = TuiApp::new(vec!["repo".into()], vec!["/tmp/repo".into()], "status");
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal must be created");
+        terminal
+            .draw(|frame| app.ui(frame))
+            .expect("TUI must render to a test backend");
+
+        let buffer = terminal.backend().buffer();
+        // The outer margin puts the main panes at x=1, y=5. The pane border is
+        // at x=1 and the one-cell padding is x=2, so the first list glyph is x=3.
+        assert_eq!(buffer.cell((1, 5)).unwrap().symbol(), "┌");
+        assert_eq!(buffer.cell((2, 7)).unwrap().symbol(), " ");
+        assert_eq!(buffer.cell((3, 7)).unwrap().symbol(), "▸");
+
+        // The detail pane starts after the first 50% column. Its body follows
+        // the same border + padding contract as the list pane.
+        assert_eq!(buffer.cell((40, 5)).unwrap().symbol(), "┌");
+        assert_eq!(buffer.cell((41, 7)).unwrap().symbol(), " ");
+        assert_eq!(buffer.cell((42, 7)).unwrap().symbol(), "W");
+    }
+
+    #[test]
+    fn narrow_terminal_renders_without_panicking() {
+        let mut app = TuiApp::new(vec!["repo".into()], vec!["/tmp/repo".into()], "status");
+        let backend = TestBackend::new(8, 7);
+        let mut terminal = Terminal::new(backend).expect("test terminal must be created");
+        terminal
+            .draw(|frame| app.ui(frame))
+            .expect("TUI must tolerate a terminal smaller than its pane content");
     }
 
     // --- completion_reveal_opts: Blocked gets its own orange reveal ---------

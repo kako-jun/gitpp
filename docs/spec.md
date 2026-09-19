@@ -188,6 +188,12 @@ reducing the chance of stray input bytes appearing at the prompt.
 
 ### Layout
 
+The repository list and detail panes draw their body content with one cell of inner
+padding on every side, in addition to the border. The header and footer intentionally
+remain border-only so their fixed heights and compact layout do not change. On a narrow
+terminal, the content area is clamped to zero rather than underflowing; scrolling and
+rendering resume normally when the pane has enough room.
+
 **List mode (default):**
 
 ```
@@ -195,12 +201,14 @@ reducing the chance of stray input bytes appearing at the prompt.
 │ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
-│▸✓ freeza                           Done                     │
-│  [████████████████████████████████████████] 100%             │
-│ ⚙ sss                              Pulling...               │
-│  [████████████████████░░░░░░░░░░░░░░░░░░░░]  50%            │
-│ ⏸ noun-gender                       Waiting...              │
-│  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
+│                                                            │
+│ ▸✓ freeza                           Done                     │
+│   [████████████████████████████████████████] 100%            │
+│  ⚙ sss                              Pulling...               │
+│   [████████████████████░░░░░░░░░░░░░░░░░░░░]  50%           │
+│  ⏸ noun-gender                       Waiting...              │
+│   [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%          │
+│                                                            │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
 │ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
@@ -214,10 +222,12 @@ reducing the chance of stray input bytes appearing at the prompt.
 │ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
-│   ✓ freeza         Done  100% │ remote: Enumerating objects:  │
-│▸⚙ sss           Pull..   50% │   12, done.                  │
-│   ⏸ noun-gender   Wait..   0% │ Receiving objects:  60%      │
-│                                │   (7/12) 1.2 MiB            │
+│                                │                             │
+│    ✓ freeza         Done  100% │  remote: Enumerating objects: │
+│ ▸⚙ sss           Pull..   50% │    12, done.                  │
+│    ⏸ noun-gender   Wait..   0% │  Receiving objects:  60%      │
+│                                │    (7/12) 1.2 MiB            │
+│                                │                             │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
 │ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
