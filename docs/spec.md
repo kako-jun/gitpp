@@ -201,12 +201,14 @@ rendering resume normally when the pane has enough room.
 │ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ────────────────────────────────────┐
-│▸✓ freeza                           Done                     │
-│  [████████████████████████████████████████] 100%             │
-│ ⚙ sss                              Pulling...               │
-│  [████████████████████░░░░░░░░░░░░░░░░░░░░]  50%            │
-│ ⏸ noun-gender                       Waiting...              │
-│  [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%           │
+│                                                            │
+│ ▸✓ freeza                           Done                     │
+│   [████████████████████████████████████████] 100%            │
+│  ⚙ sss                              Pulling...               │
+│   [████████████████████░░░░░░░░░░░░░░░░░░░░]  50%           │
+│  ⏸ noun-gender                       Waiting...              │
+│   [░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0%          │
+│                                                            │
 └──────────────────────────────────────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
 │ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
@@ -220,10 +222,12 @@ rendering resume normally when the pane has enough room.
 │ gitpp  j/k:move  Enter:detail  h/l:scroll  q:quit           │
 └──────────────────────────────────────────────────────────────┘
 ┌─ Repositories [1-20/101] ──────┬─ sss ───────────────────────┐
-│   ✓ freeza         Done  100% │ remote: Enumerating objects:  │
-│▸⚙ sss           Pull..   50% │   12, done.                  │
-│   ⏸ noun-gender   Wait..   0% │ Receiving objects:  60%      │
-│                                │   (7/12) 1.2 MiB            │
+│                                │                             │
+│    ✓ freeza         Done  100% │  remote: Enumerating objects: │
+│ ▸⚙ sss           Pull..   50% │    12, done.                  │
+│    ⏸ noun-gender   Wait..   0% │  Receiving objects:  60%      │
+│                                │    (7/12) 1.2 MiB            │
+│                                │                             │
 └────────────────────────────────┴──────────────────────────────┘
 ┌──────────────────────────────────────────────────────────────┐
 │ Total: 103 | Done: 52 | OK: 48 | Fail: 2 | Untracked: 2    │
