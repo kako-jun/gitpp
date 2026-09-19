@@ -16,6 +16,16 @@
   inner padding around their body content, while the header and footer keep their
   existing compact heights. Narrow terminals clamp the pane content area safely.
 
+### Fixed
+
+- **Reliable completion bloom lifecycle.** Repository names bloom again after a
+  new operation starts, stale animation handles are cleaned up when rows leave
+  the TUI, and the selected row keeps its reversed highlight throughout the
+  animation.
+- **Unicode-safe repository names.** Long names are truncated at grapheme
+  boundaries using terminal cell width, avoiding panics and misaligned rows
+  for non-ASCII names.
+
 ## v0.7.7 — 2026-06-05
 
 ### Added

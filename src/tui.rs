@@ -17,12 +17,14 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 const PANE_PADDING: u16 = 1;
 const PANE_BORDER_SIZE: u16 = 2;
 const PANE_CONTENT_OVERHEAD: u16 = PANE_BORDER_SIZE + PANE_PADDING * 2;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RepoStatus {
     Waiting,
     Running,
@@ -34,6 +36,12 @@ pub enum RepoStatus {
     Blocked,
     Failed,
     Untracked,
+}
+
+#[derive(Debug)]
+struct NameReveal {
+    handle: RevealHandle,
+    status: RepoStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -56,11 +64,13 @@ pub struct TuiApp {
     status_message: Option<(String, Instant)>,
     clipboard: Option<arboard::Clipboard>,
     auto_exit_hint: bool,
-    /// repo path → 完了瞬間に名前を bloom させる reveal。リポが Waiting/Running から
-    /// 終端ステータス (Updated/Unchanged/Failed/Untracked) に変わった最初の描画で
-    /// lazy-insert し、~200 ms で fade_to に到達したらそのまま残す (再走時は上書き)。
-    /// 並列ジョブの「終わった！」が視線で拾えるようにするための演出。
-    name_reveals: HashMap<String, RevealHandle>,
+    /// repo path → 完了瞬間に名前を bloom させる reveal。
+    ///
+    /// The map is kept bounded to the current repository rows. Waiting/Running
+    /// rows remove their entry, arming the next terminal transition to bloom
+    /// again. Keeping the terminal status with the handle also handles a direct
+    /// terminal-to-terminal update without stale animation state.
+    name_reveals: HashMap<String, NameReveal>,
 }
 
 impl TuiApp {
@@ -92,15 +102,31 @@ impl TuiApp {
         }
     }
 
-    /// リポ名の表示形式。リスト幅の整合を取るための truncate + pad は bloom 経路と
-    /// 通常経路の両方で同じロジックを使う。元コードの byte-length truncate は非 ASCII
-    /// 名に対しては不正確だが、現状の挙動を変えないよう同じまま再現している。
+    /// リポ名を端末セル幅36に収める。切り詰めは拡張書記素単位で行うため、
+    /// 非ASCII名・結合文字・絵文字シーケンスの途中で文字列を切らない。
     fn format_repo_name(name: &str) -> String {
-        if name.len() > 36 {
-            format!("{}…", &name[..35])
-        } else {
-            format!("{name:36}")
+        const MAX_WIDTH: usize = 36;
+        let width = UnicodeWidthStr::width(name);
+        if width <= MAX_WIDTH {
+            return format!("{name}{}", " ".repeat(MAX_WIDTH - width));
         }
+
+        let ellipsis = "…";
+        let ellipsis_width = UnicodeWidthStr::width(ellipsis);
+        let mut display = String::new();
+        let mut display_width = 0;
+        for grapheme in name.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if display_width + grapheme_width + ellipsis_width > MAX_WIDTH {
+                break;
+            }
+            display.push_str(grapheme);
+            display_width += grapheme_width;
+        }
+        display.push_str(ellipsis);
+        display_width += ellipsis_width;
+        display.push_str(&" ".repeat(MAX_WIDTH - display_width));
+        display
     }
 
     /// 完了 bloom 用 reveal の色。Updated は green、Failed は red、Unchanged/Untracked は
@@ -121,6 +147,14 @@ impl TuiApp {
             fade_from: from,
             fade_to: to,
         })
+    }
+
+    fn repo_name_modifier(is_selected: bool) -> Modifier {
+        if is_selected {
+            Modifier::BOLD | Modifier::REVERSED
+        } else {
+            Modifier::BOLD
+        }
     }
 
     pub fn get_repos_handle(&self) -> Arc<Mutex<Vec<RepoProgress>>> {
@@ -719,19 +753,32 @@ impl TuiApp {
     fn render_repos(&mut self, f: &mut Frame, area: Rect) {
         let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
 
-        // Lazy-init the "completion bloom" reveal the first time we see a repo in
-        // a terminal status. We anchor every new reveal at the same `now` so
-        // co-completing repos bloom in unison rather than staggered.
+        // Sync the completion bloom lifecycle before rendering. We anchor every
+        // new reveal at the same `now` so co-completing repos bloom in unison
+        // rather than staggered.
         let now = Instant::now();
+        let current_paths: HashSet<String> = repos.iter().map(|repo| repo.path.clone()).collect();
+        self.name_reveals
+            .retain(|path, _| current_paths.contains(path));
         for repo in repos.iter() {
-            if self.name_reveals.contains_key(&repo.path) {
+            let Some(opts) = Self::completion_reveal_opts(&repo.status) else {
+                // A new operation starts from Waiting/Running. Remove the old
+                // handle so its next terminal state can bloom again.
+                self.name_reveals.remove(&repo.path);
                 continue;
-            }
-            if let Some(opts) = Self::completion_reveal_opts(&repo.status) {
+            };
+            let needs_new_reveal = self
+                .name_reveals
+                .get(&repo.path)
+                .map_or(true, |reveal| reveal.status != repo.status);
+            if needs_new_reveal {
                 let display = Self::format_repo_name(&repo.name);
                 self.name_reveals.insert(
                     repo.path.clone(),
-                    RevealHandle::start_at(display.trim_end(), opts, now),
+                    NameReveal {
+                        handle: RevealHandle::start_at(display.trim_end(), opts, now),
+                        status: repo.status,
+                    },
                 );
             }
         }
@@ -795,34 +842,41 @@ impl TuiApp {
             let bloom = self
                 .name_reveals
                 .get(&repo.path)
-                .filter(|h| !h.is_done(now));
+                .filter(|reveal| !reveal.handle.is_done(now));
             if let Some(reveal) = bloom {
                 // Bloom in progress: per-grapheme colored spans, then pad to width.
-                let snap = reveal.snapshot(now);
+                let snap = reveal.handle.snapshot(now);
                 let trimmed = display_name.trim_end();
-                let mut consumed = 0usize;
+                let consumed = snap.len();
                 for g in &snap {
-                    consumed += g.text.chars().count();
                     spans.push(Span::styled(
                         g.text.clone(),
                         Style::default()
                             .fg(Color::Rgb(g.color.0, g.color.1, g.color.2))
-                            .add_modifier(Modifier::BOLD),
+                            .add_modifier(Self::repo_name_modifier(is_selected)),
                     ));
                 }
-                let trimmed_chars = trimmed.chars().count();
-                if consumed < trimmed_chars {
+                let graphemes: Vec<&str> = trimmed.graphemes(true).collect();
+                if consumed < graphemes.len() {
                     // Graphemes not yet revealed — keep their slots so width doesn't
                     // shift between frames. Render as dim placeholders.
-                    let placeholder: String = trimmed.chars().skip(consumed).collect();
+                    let placeholder: String = graphemes.iter().skip(consumed).copied().collect();
                     spans.push(Span::styled(
                         placeholder,
-                        Style::default().fg(Color::DarkGray),
+                        Style::default()
+                            .fg(Color::DarkGray)
+                            .add_modifier(Self::repo_name_modifier(is_selected)),
                     ));
                 }
-                let total_chars = display_name.chars().count();
-                if trimmed_chars < total_chars {
-                    spans.push(Span::raw(" ".repeat(total_chars - trimmed_chars)));
+                let trailing_width = UnicodeWidthStr::width(display_name.as_str())
+                    .saturating_sub(UnicodeWidthStr::width(trimmed));
+                if trailing_width > 0 {
+                    spans.push(Span::styled(
+                        " ".repeat(trailing_width),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Self::repo_name_modifier(is_selected)),
+                    ));
                 }
             } else {
                 spans.push(Span::styled(display_name, name_style));
@@ -951,11 +1005,13 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
 mod tests {
     use super::{update_repo_status, RepoStatus, TuiApp};
     use jiwa::Rgb;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{backend::TestBackend, style::Modifier, Terminal};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
 
     #[test]
     fn sanitize_summary_text_removes_ansi_sequences() {
@@ -1021,6 +1077,71 @@ mod tests {
         terminal
             .draw(|frame| app.ui(frame))
             .expect("TUI must tolerate a terminal smaller than its pane content");
+    }
+
+    #[test]
+    fn format_repo_name_truncates_non_ascii_without_panicking() {
+        let formatted = TuiApp::format_repo_name("東京👨‍👩‍👧‍👦特許許可局の長いリポジトリ名さらに長い");
+
+        assert_eq!(UnicodeWidthStr::width(formatted.as_str()), 36);
+        assert!(formatted.trim_end().ends_with('…'));
+        assert!(formatted
+            .trim_end()
+            .graphemes(true)
+            .all(|grapheme| !grapheme.is_empty()));
+    }
+
+    #[test]
+    fn bloom_map_is_bounded_and_rearmed_after_running() {
+        let mut app = TuiApp::new(
+            vec!["one".into(), "two".into()],
+            vec!["/tmp/one".into(), "/tmp/two".into()],
+            "status",
+        );
+        let backend = TestBackend::new(100, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal must be created");
+        let handle = app.get_repos_handle();
+
+        update_repo_status(&handle, "one", RepoStatus::Updated, "Updated", 100);
+        update_repo_status(&handle, "two", RepoStatus::Failed, "Failed", 100);
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        assert_eq!(app.name_reveals.len(), 2);
+
+        update_repo_status(&handle, "one", RepoStatus::Running, "Running", 50);
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        assert_eq!(app.name_reveals.len(), 1);
+        assert!(!app.name_reveals.contains_key("/tmp/one"));
+
+        update_repo_status(&handle, "one", RepoStatus::Unchanged, "Unchanged", 100);
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        assert_eq!(app.name_reveals.len(), 2);
+        assert_eq!(app.name_reveals["/tmp/one"].status, RepoStatus::Unchanged);
+
+        let mut repos = handle.lock().unwrap();
+        repos.retain(|repo| repo.path == "/tmp/one");
+        drop(repos);
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        assert_eq!(app.name_reveals.len(), 1);
+        assert!(app.name_reveals.contains_key("/tmp/one"));
+    }
+
+    #[test]
+    fn selected_bloom_keeps_reversed_modifier() {
+        let mut app = TuiApp::new(vec!["repo".into()], vec!["/tmp/repo".into()], "status");
+        let handle = app.get_repos_handle();
+        update_repo_status(&handle, "repo", RepoStatus::Updated, "Updated", 100);
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal must be created");
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+
+        // Main pane starts at x=1; border + padding + selector/status prefix
+        // place the first blooming name grapheme at x=6.
+        let cell = terminal.backend().buffer().cell((6, 7)).unwrap();
+        assert!(
+            cell.modifier.contains(Modifier::REVERSED),
+            "selected rows must stay reversed while their name blooms"
+        );
     }
 
     // --- completion_reveal_opts: Blocked gets its own orange reveal ---------
