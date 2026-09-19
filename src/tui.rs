@@ -301,7 +301,7 @@ impl TuiApp {
     }
 
     fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> io::Result<()> {
-        loop {
+        'main: loop {
             terminal.draw(|f| self.ui(f))?;
 
             let repos = self.repos.lock().unwrap_or_else(|e| e.into_inner());
@@ -318,20 +318,31 @@ impl TuiApp {
             drop(repos);
 
             if all_done {
-                terminal.draw(|f| self.ui(f))?;
-                if let Some(code) = Self::poll_key_press(Duration::from_secs(3))? {
-                    match code {
-                        KeyCode::Char('q') | KeyCode::Esc => break,
-                        _ => {
-                            // User interacted, switch to browse mode
-                            self.auto_exit_hint = false;
-                            self.handle_key(code);
-                            self.browse_mode(terminal)?;
-                            break;
+                let deadline = Instant::now() + Duration::from_secs(3);
+                loop {
+                    // Keep ticking the renderer during the grace period so an
+                    // in-flight completion bloom reaches its final frame.
+                    terminal.draw(|f| self.ui(f))?;
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    if let Some(code) =
+                        Self::poll_key_press(remaining.min(Duration::from_millis(100)))?
+                    {
+                        match code {
+                            KeyCode::Char('q') | KeyCode::Esc => break 'main,
+                            _ => {
+                                // User interacted, switch to browse mode
+                                self.auto_exit_hint = false;
+                                self.handle_key(code);
+                                self.browse_mode(terminal)?;
+                                break 'main;
+                            }
                         }
                     }
                 }
-                break;
+                break 'main;
             }
 
             if let Some(code) = Self::poll_key_press(Duration::from_millis(100))? {
@@ -1005,7 +1016,11 @@ pub fn append_repo_output(repos: &Arc<Mutex<Vec<RepoProgress>>>, repo_name: &str
 mod tests {
     use super::{update_repo_status, RepoStatus, TuiApp};
     use jiwa::Rgb;
-    use ratatui::{backend::TestBackend, style::Modifier, Terminal};
+    use ratatui::{
+        backend::TestBackend,
+        style::{Color, Modifier},
+        Terminal,
+    };
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     use std::thread;
@@ -1144,6 +1159,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn completion_bloom_reaches_final_frame_when_redrawn() {
+        let mut app = TuiApp::new(vec!["r".into()], vec!["/tmp/repo".into()], "status");
+        let handle = app.get_repos_handle();
+        update_repo_status(&handle, "r", RepoStatus::Updated, "Updated", 100);
+
+        let backend = TestBackend::new(80, 20);
+        let mut terminal = Terminal::new(backend).expect("test terminal must be created");
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        let initial_fg = terminal.backend().buffer().cell((6, 7)).unwrap().fg;
+        assert_ne!(
+            initial_fg,
+            Color::Cyan,
+            "first frame should be the bloom shade"
+        );
+
+        // The one-grapheme name has a 180 ms fade. A subsequent frame must
+        // render the stable name style, matching the run_app grace-period loop.
+        thread::sleep(Duration::from_millis(220));
+        terminal.draw(|frame| app.ui(frame)).unwrap();
+        assert_eq!(
+            terminal.backend().buffer().cell((6, 7)).unwrap().fg,
+            Color::Cyan
+        );
+    }
+
     // --- completion_reveal_opts: Blocked gets its own orange reveal ---------
 
     #[test]
@@ -1167,7 +1208,7 @@ mod tests {
         let app = TuiApp::new(names, paths, "pull");
         let handle = app.get_repos_handle();
         for (name, _, status) in rows {
-            update_repo_status(&handle, name, status.clone(), "done", 100);
+            update_repo_status(&handle, name, *status, "done", 100);
         }
         app
     }
