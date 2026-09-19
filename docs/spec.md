@@ -194,6 +194,17 @@ remain border-only so their fixed heights and compact layout do not change. On a
 terminal, the content area is clamped to zero rather than underflowing; scrolling and
 rendering resume normally when the pane has enough room.
 
+When a repository reaches a terminal status, its displayed name uses a short
+completion bloom from a dark status shade to the normal status color. The
+animation is removed when the row returns to Waiting or Running, so a later
+completion blooms again. Handles are bounded to the repository rows currently
+shown by the TUI. The selected row keeps its reversed highlight throughout the
+bloom.
+
+Repository names are truncated at extended grapheme-cluster boundaries and
+padded to 36 terminal cells. This keeps combining marks, emoji sequences, and
+wide CJK names intact and aligned instead of slicing UTF-8 bytes.
+
 **List mode (default):**
 
 ```
@@ -376,6 +387,7 @@ Before any command runs, gitpp scans `base_dir` for git repositories not listed 
 | rustyline | 14.0 | Interactive mode (REPL) |
 | serde + serde_yaml | 1.0 / 0.9 | YAML config parsing |
 | encoding_rs | 0.8 | Per-OS character encoding conversion |
+| jiwa + unicode-segmentation + unicode-width | 0.1 / 1.12 / 0.1 | Completion bloom and Unicode-safe TUI names |
 | dirs | 5.0 | Home directory resolution |
 
 Rust edition 2021.

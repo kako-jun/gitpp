@@ -25,6 +25,8 @@ dirs = "5.0"
 ctrlc = "3.5.2"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 jiwa = "0.1"
+unicode-segmentation = "1.12"
+unicode-width = "0.1"
 
 [dev-dependencies]
 cargo-husky = { version = "1", default-features = false, features = ["user-hooks"] }
