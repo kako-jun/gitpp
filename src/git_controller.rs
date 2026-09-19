@@ -11,6 +11,17 @@ pub struct GitResult {
     pub blocked: bool,
 }
 
+/// Optional recovery performed by an explicit pull mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRecovery {
+    /// Preserve the existing safe pull behavior.
+    None,
+    /// Temporarily stash local changes, fast-forward, then restore them.
+    StashLocal,
+    /// Discard uncommitted tracked and untracked files before fast-forwarding.
+    DiscardLocal,
+}
+
 pub struct GitController {
     encoding: &'static encoding_rs::Encoding,
 }
@@ -38,6 +49,10 @@ impl GitController {
     }
 
     pub fn git_pull(&self, dir: &Path) -> GitResult {
+        self.git_pull_with_recovery(dir, PullRecovery::None)
+    }
+
+    pub fn git_pull_with_recovery(&self, dir: &Path, recovery: PullRecovery) -> GitResult {
         let mut all_output = String::new();
 
         // 1. Fetch from remote. This is the only path that can mark pull as Failed
@@ -62,7 +77,89 @@ impl GitController {
         );
         let has_upstream = upstream.success;
 
-        // 3. Merge branch. None of these mark pull as Failed.
+        // Explicit recovery is deliberately opt-in. The default path below is
+        // unchanged: it never stashes, resets, or cleans local files.
+        let mut stash_oid: Option<String> = None;
+        if recovery == PullRecovery::DiscardLocal {
+            let reset_result = self.exec_git(dir, &["reset", "--hard", "HEAD"]);
+            all_output.push_str(&reset_result.output);
+            if !reset_result.success {
+                all_output.push_str("[gitpp] discard-local failed while resetting tracked files\n");
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            let clean_result = self.exec_git(dir, &["clean", "-fd"]);
+            all_output.push_str(&clean_result.output);
+            if !clean_result.success {
+                all_output
+                    .push_str("[gitpp] discard-local failed while removing untracked files\n");
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            all_output.push_str("[gitpp] discarded local uncommitted changes\n");
+        } else if recovery == PullRecovery::StashLocal && !detached && has_upstream {
+            let status_result =
+                self.exec_git(dir, &["status", "--porcelain", "--ignore-submodules=none"]);
+            all_output.push_str(&status_result.output);
+            if !status_result.success {
+                all_output.push_str("[gitpp] stash-local failed while checking local changes\n");
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            if !status_result.output.trim().is_empty() {
+                // `git stash push` exits successfully even when there is no
+                // stashable superproject change (for example, a dirty
+                // submodule on Git versions without stash recursion support).
+                // Capture the ref before and after so we never pop a user's
+                // pre-existing stash in that no-op case.
+                let before_stash = self.stash_oid(dir);
+                let stash_result = self.exec_git(
+                    dir,
+                    &[
+                        "stash",
+                        "push",
+                        "--include-untracked",
+                        "-m",
+                        "gitpp --stash-local",
+                    ],
+                );
+                all_output.push_str(&stash_result.output);
+                if !stash_result.success {
+                    all_output
+                        .push_str("[gitpp] stash-local failed; local changes were not recovered\n");
+                    return GitResult {
+                        output: all_output,
+                        success: false,
+                        had_changes: false,
+                        blocked: false,
+                    };
+                }
+                let after_stash = self.stash_oid(dir);
+                if after_stash.is_some() && after_stash != before_stash {
+                    stash_oid = after_stash;
+                    all_output.push_str("[gitpp] stashed local changes\n");
+                } else {
+                    all_output.push_str(
+                        "[gitpp] no stash created; preserving existing stash and local changes\n",
+                    );
+                }
+            }
+        }
+
+        // 3. Merge branch. None of these mark pull as Failed unless restoring a
+        // stash fails; a blocked ff-only merge remains a recoverable status.
         let mut ff_applied = false;
         let mut ff_blocked = false;
         if detached || !has_upstream {
@@ -80,6 +177,37 @@ impl GitController {
                 ff_blocked = true;
                 all_output.push_str("[gitpp] fast-forward skipped (diverged or local changes)\n");
             }
+        }
+
+        if let Some(created_stash_oid) = stash_oid {
+            // `stash@{0}` is the newly-created entry only after verifying that
+            // the top ref still resolves to the captured object. Never use a
+            // bare `stash pop`, which could consume an unrelated user stash.
+            if self.stash_oid(dir).as_deref() != Some(created_stash_oid.as_str()) {
+                all_output.push_str(
+                    "[gitpp] stash reference changed; stash kept and local changes were not restored\n",
+                );
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            let pop_result = self.exec_git(dir, &["stash", "pop", "stash@{0}"]);
+            all_output.push_str(&pop_result.output);
+            if !pop_result.success {
+                all_output.push_str(
+                    "[gitpp] stash pop conflict: stash kept; resolve conflicts before retrying\n",
+                );
+                return GitResult {
+                    output: all_output,
+                    success: false,
+                    had_changes: false,
+                    blocked: false,
+                };
+            }
+            all_output.push_str("[gitpp] restored stashed local changes\n");
         }
 
         // 4. Sync submodules. Failure here never affects the pull result.
@@ -242,6 +370,11 @@ impl GitController {
             had_changes,
             ..result
         }
+    }
+
+    fn stash_oid(&self, dir: &Path) -> Option<String> {
+        let result = self.exec_git(dir, &["rev-parse", "--verify", "refs/stash"]);
+        result.success.then(|| result.output.trim().to_string())
     }
 
     pub fn git_gc(&self, dir: &Path) -> GitResult {
@@ -845,6 +978,172 @@ mod tests {
             head_sha(&work),
             "local commit B must survive two blocked pulls untouched"
         );
+    }
+
+    // --- explicit local recovery modes -------------------------------------
+
+    #[test]
+    fn stash_local_fast_forwards_and_restores_uncommitted_changes() {
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        advance_origin(tmp.path(), &origin);
+        fs::write(work.join("local-notes.txt"), "LOCAL EDIT\n").unwrap();
+
+        let result = GitController::new().git_pull_with_recovery(&work, PullRecovery::StashLocal);
+
+        assert!(
+            result.success,
+            "stash recovery should succeed: {}",
+            result.output
+        );
+        assert!(result.had_changes, "the remote fast-forward is an update");
+        assert!(!result.blocked);
+        let restored = fs::read_to_string(work.join("file.txt")).unwrap();
+        assert!(
+            restored.contains("more"),
+            "remote change must be present: {restored}"
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("local-notes.txt")).unwrap(),
+            "LOCAL EDIT\n",
+            "local untracked file must be restored"
+        );
+        assert!(
+            GitController::new()
+                .git_stash_list(&work)
+                .output
+                .trim()
+                .is_empty(),
+            "a successfully popped stash should be removed"
+        );
+        assert!(result.output.contains("restored stashed local changes"));
+    }
+
+    #[test]
+    fn stash_local_does_not_pop_existing_stash_when_submodule_stash_is_a_noop() {
+        let _env_guard = SUBMODULE_PROTOCOL_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin_with_submodule(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // Initialize the submodule, then create a user-owned stash in the
+        // superproject. The only later change is inside the submodule. On Git
+        // versions where `git stash push` cannot recurse into submodules, the
+        // stash command is a successful no-op; gitpp must not pop the user's
+        // existing entry in response.
+        unsafe {
+            std::env::set_var("GIT_ALLOW_PROTOCOL", "file");
+        }
+        git(&work, &["submodule", "update", "--init", "--recursive"]);
+        fs::write(work.join("file.txt"), "user stash\n").unwrap();
+        git(&work, &["stash", "push", "-m", "user stash"]);
+        let before_stash = GitController::new().git_stash_list(&work).output;
+        fs::write(work.join("mysub").join("sub.txt"), "dirty submodule\n").unwrap();
+
+        let result = GitController::new().git_pull_with_recovery(&work, PullRecovery::StashLocal);
+        unsafe {
+            std::env::remove_var("GIT_ALLOW_PROTOCOL");
+        }
+
+        assert!(
+            result.success,
+            "a no-op stash must not fail pull: {}",
+            result.output
+        );
+        assert!(
+            result.output.contains("no stash created"),
+            "the no-op stash must be explicit in output: {}",
+            result.output
+        );
+        assert_eq!(
+            GitController::new().git_stash_list(&work).output,
+            before_stash,
+            "the user's pre-existing stash must not be popped"
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("mysub").join("sub.txt")).unwrap(),
+            "dirty submodule\n",
+            "dirty submodule content must remain untouched"
+        );
+    }
+
+    #[test]
+    fn stash_local_conflict_fails_and_keeps_stash() {
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        // Make the remote and local edits touch the same line so stash pop
+        // cannot apply cleanly after the fast-forward.
+        let remote_edit = tmp.path().join("remote-edit");
+        git(
+            tmp.path(),
+            &[
+                "clone",
+                origin.to_str().unwrap(),
+                remote_edit.to_str().unwrap(),
+            ],
+        );
+        fs::write(remote_edit.join("file.txt"), "REMOTE EDIT\n").unwrap();
+        git(&remote_edit, &["add", "file.txt"]);
+        git(&remote_edit, &["commit", "-m", "remote edit"]);
+        git(&remote_edit, &["push", "origin", "main"]);
+
+        fs::write(work.join("file.txt"), "LOCAL EDIT\n").unwrap();
+        let result = GitController::new().git_pull_with_recovery(&work, PullRecovery::StashLocal);
+
+        assert!(
+            !result.success,
+            "stash pop conflict must fail the explicit recovery"
+        );
+        assert!(!result.blocked);
+        assert!(
+            result.output.contains("stash pop conflict: stash kept"),
+            "the output must tell the user the stash is retained: {}",
+            result.output
+        );
+        assert!(
+            !GitController::new()
+                .git_stash_list(&work)
+                .output
+                .trim()
+                .is_empty(),
+            "a conflicting stash pop must leave the stash entry"
+        );
+    }
+
+    #[test]
+    fn discard_local_removes_uncommitted_files_before_fast_forward() {
+        let tmp = TempDir::new().unwrap();
+        let origin = seed_origin(tmp.path());
+        let work = clone_work(tmp.path(), &origin);
+
+        advance_origin(tmp.path(), &origin);
+        fs::write(work.join("file.txt"), "LOCAL EDIT\n").unwrap();
+        fs::write(work.join("untracked.txt"), "REMOVE ME\n").unwrap();
+
+        let result = GitController::new().git_pull_with_recovery(&work, PullRecovery::DiscardLocal);
+
+        assert!(
+            result.success,
+            "discard recovery should succeed: {}",
+            result.output
+        );
+        assert!(result.had_changes);
+        assert!(!result.blocked);
+        assert_eq!(
+            fs::read_to_string(work.join("file.txt")).unwrap(),
+            "line1\nmore\n",
+            "tracked local edits must be discarded before the fast-forward"
+        );
+        assert!(!work.join("untracked.txt").exists());
+        assert!(result
+            .output
+            .contains("discarded local uncommitted changes"));
     }
 
     // --- clone -------------------------------------------------------------

@@ -4,9 +4,10 @@ mod setting_util;
 mod tui;
 
 use git_controller::GitController;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -20,6 +21,13 @@ struct GlobalOptions {
     root_path: Option<PathBuf>,
     quiet: bool,
     rest: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PullMode {
+    Default,
+    StashLocal,
+    DiscardLocal(HashSet<String>),
 }
 
 struct Semaphore {
@@ -395,7 +403,18 @@ fn execute_command(
             spawn_clone_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
         }
         "pull" => {
-            spawn_pull_workers(setting, &enabled_repos, repos_handle, &semaphore, base_dir);
+            let pull_mode = parse_pull_mode(&filtered_args, &enabled_repos)?;
+            if let PullMode::DiscardLocal(names) = &pull_mode {
+                confirm_discard_local(names)?;
+            }
+            spawn_pull_workers(
+                setting,
+                &enabled_repos,
+                repos_handle,
+                &semaphore,
+                base_dir,
+                pull_mode,
+            );
         }
         "push" => {
             let msg = setting
@@ -541,6 +560,7 @@ fn show_help() {
     println!(
         "  \x1b[1;33m-q\x1b[0m, \x1b[1;33m--quiet\x1b[0m              No TUI; progress on stderr, summary on stdout"
     );
+    println!("  Pull options: --stash-local, or --discard-local <repo...> (confirmation required)");
     println!("  \x1b[1;33m-V\x1b[0m, \x1b[1;33m--version\x1b[0m            Show version");
     println!(
         "  \x1b[1;33m-h\x1b[0m, \x1b[1;33m--help\x1b[0m               Show this help message\n"
@@ -684,6 +704,7 @@ fn spawn_pull_workers(
     repos_handle: Arc<Mutex<Vec<tui::RepoProgress>>>,
     semaphore: &Arc<Semaphore>,
     base_dir: &Path,
+    pull_mode: PullMode,
 ) {
     for repo in repos {
         let repo_data = (*repo).clone();
@@ -692,6 +713,17 @@ fn spawn_pull_workers(
         let repo_name = extract_repo_name(&repo.remote);
         let sem = Arc::clone(semaphore);
         let base = base_dir.to_path_buf();
+        let recovery = match &pull_mode {
+            PullMode::Default => git_controller::PullRecovery::None,
+            PullMode::StashLocal => git_controller::PullRecovery::StashLocal,
+            PullMode::DiscardLocal(names)
+                if names.contains(&repo_name)
+                    || names.contains(&format!("{}/{}", repo_data.group, repo_name)) =>
+            {
+                git_controller::PullRecovery::DiscardLocal
+            }
+            PullMode::DiscardLocal(_) => git_controller::PullRecovery::None,
+        };
 
         thread::spawn(move || {
             let _guard = sem.acquire();
@@ -727,7 +759,11 @@ fn spawn_pull_workers(
                 "Pulling...",
                 50,
             );
-            let result = git.git_pull(&repo_dir);
+            let result = if recovery == git_controller::PullRecovery::None {
+                git.git_pull(&repo_dir)
+            } else {
+                git.git_pull_with_recovery(&repo_dir, recovery)
+            };
             append_repo_output(&repos_handle, &repo_name, &result.output);
 
             let status = resolve_pull_status(&result);
@@ -737,8 +773,108 @@ fn spawn_pull_workers(
                 RepoStatus::Unchanged => "Unchanged",
                 _ => "Failed",
             };
+            let message = if !result.success && result.output.contains("stash pop conflict") {
+                "Failed: stash pop conflict (stash kept)"
+            } else {
+                message
+            };
             update_repo_status(&repos_handle, &repo_name, status, message, 100);
         });
+    }
+}
+
+fn parse_pull_mode(
+    args: &[String],
+    enabled_repos: &[&setting_util::Repos],
+) -> Result<PullMode, String> {
+    let mut repo_names: HashMap<String, Vec<String>> = HashMap::new();
+    let mut repo_identifiers = HashSet::new();
+    for repo in enabled_repos {
+        let name = extract_repo_name(&repo.remote);
+        repo_names
+            .entry(name.clone())
+            .or_default()
+            .push(repo.group.clone());
+        repo_identifiers.insert(format!("{}/{}", repo.group, name));
+    }
+    let mut stash_local = false;
+    let mut discard_local = Vec::new();
+    let mut i = 1;
+
+    while i < args.len() {
+        match args[i].as_str() {
+            "--stash-local" => {
+                stash_local = true;
+                i += 1;
+            }
+            "--discard-local" => {
+                i += 1;
+                let start = i;
+                while i < args.len() && !args[i].starts_with('-') {
+                    discard_local.push(args[i].clone());
+                    i += 1;
+                }
+                if i == start {
+                    return Err("--discard-local requires at least one repository name".to_string());
+                }
+            }
+            option => return Err(format!("Unknown pull option: {option}")),
+        }
+    }
+
+    if stash_local && !discard_local.is_empty() {
+        return Err("--stash-local and --discard-local cannot be combined".to_string());
+    }
+    if stash_local {
+        return Ok(PullMode::StashLocal);
+    }
+    if discard_local.is_empty() {
+        return Ok(PullMode::Default);
+    }
+
+    let mut names = HashSet::new();
+    for name in discard_local {
+        if repo_identifiers.contains(&name) {
+            // `group/repo` is always unambiguous, even when multiple groups
+            // contain repositories with the same basename.
+        } else if let Some(groups) = repo_names.get(&name) {
+            if groups.len() > 1 {
+                return Err(format!(
+                    "Ambiguous repository for --discard-local: {name}. Use group/{name}."
+                ));
+            }
+        } else {
+            return Err(format!(
+                "Unknown repository for --discard-local: {name}. Use an enabled repository name."
+            ));
+        }
+        if !names.insert(name.clone()) {
+            return Err(format!("Duplicate repository for --discard-local: {name}"));
+        }
+    }
+    Ok(PullMode::DiscardLocal(names))
+}
+
+fn confirm_discard_local(names: &HashSet<String>) -> Result<(), String> {
+    let mut sorted_names: Vec<_> = names.iter().cloned().collect();
+    sorted_names.sort();
+    eprintln!(
+        "WARNING: --discard-local will permanently delete uncommitted changes in: {}",
+        sorted_names.join(", ")
+    );
+    eprint!("Type 'discard' to continue: ");
+    io::stderr()
+        .flush()
+        .map_err(|e| format!("Could not show confirmation prompt: {e}"))?;
+    let mut answer = String::new();
+    io::stdin()
+        .lock()
+        .read_line(&mut answer)
+        .map_err(|e| format!("Could not read confirmation: {e}"))?;
+    if answer.trim() == "discard" {
+        Ok(())
+    } else {
+        Err("Discard cancelled; type 'discard' exactly to confirm".to_string())
     }
 }
 
@@ -1115,6 +1251,123 @@ mod tests {
                 "success={success} had_changes={had_changes} blocked={blocked}"
             );
         }
+    }
+
+    #[test]
+    fn parse_pull_mode_defaults_to_safe_behavior() {
+        let repos = make_repo(&[("git@github.com:user/alpha.git", "main", "group")]);
+        let refs: Vec<_> = repos.iter().collect();
+        assert_eq!(
+            parse_pull_mode(&["pull".to_string()], &refs).unwrap(),
+            PullMode::Default
+        );
+    }
+
+    #[test]
+    fn parse_pull_mode_accepts_stash_local() {
+        let repos = make_repo(&[("git@github.com:user/alpha.git", "main", "group")]);
+        let refs: Vec<_> = repos.iter().collect();
+        assert_eq!(
+            parse_pull_mode(&["pull".to_string(), "--stash-local".to_string()], &refs).unwrap(),
+            PullMode::StashLocal
+        );
+    }
+
+    #[test]
+    fn parse_pull_mode_requires_known_unique_discard_targets() {
+        let repos = make_repo(&[
+            ("git@github.com:user/alpha.git", "main", "group"),
+            ("git@github.com:user/beta.git", "main", "group"),
+        ]);
+        let refs: Vec<_> = repos.iter().collect();
+        let mode = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "beta".to_string(),
+                "alpha".to_string(),
+            ],
+            &refs,
+        )
+        .unwrap();
+        assert_eq!(
+            mode,
+            PullMode::DiscardLocal(HashSet::from(["alpha".to_string(), "beta".to_string()]))
+        );
+
+        let unknown = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "missing".to_string(),
+            ],
+            &refs,
+        )
+        .unwrap_err();
+        assert!(unknown.contains("Unknown repository"));
+
+        let duplicate = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "alpha".to_string(),
+                "alpha".to_string(),
+            ],
+            &refs,
+        )
+        .unwrap_err();
+        assert!(duplicate.contains("Duplicate repository"));
+
+        let ambiguous_repos = make_repo(&[
+            ("git@github.com:one/shared.git", "main", "one"),
+            ("git@github.com:two/shared.git", "main", "two"),
+        ]);
+        let ambiguous_refs: Vec<_> = ambiguous_repos.iter().collect();
+        let ambiguous = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "shared".to_string(),
+            ],
+            &ambiguous_refs,
+        )
+        .unwrap_err();
+        assert!(ambiguous.contains("Ambiguous repository"));
+
+        let qualified = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--discard-local".to_string(),
+                "one/shared".to_string(),
+            ],
+            &ambiguous_refs,
+        )
+        .unwrap();
+        assert_eq!(
+            qualified,
+            PullMode::DiscardLocal(HashSet::from(["one/shared".to_string()]))
+        );
+    }
+
+    #[test]
+    fn parse_pull_mode_rejects_empty_or_combined_recovery_options() {
+        let repos = make_repo(&[("git@github.com:user/alpha.git", "main", "group")]);
+        let refs: Vec<_> = repos.iter().collect();
+        let empty = parse_pull_mode(&["pull".to_string(), "--discard-local".to_string()], &refs)
+            .unwrap_err();
+        assert!(empty.contains("requires at least one"));
+
+        let combined = parse_pull_mode(
+            &[
+                "pull".to_string(),
+                "--stash-local".to_string(),
+                "--discard-local".to_string(),
+                "alpha".to_string(),
+            ],
+            &refs,
+        )
+        .unwrap_err();
+        assert!(combined.contains("cannot be combined"));
     }
 
     #[test]
