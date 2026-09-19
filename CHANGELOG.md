@@ -10,6 +10,12 @@
   <repo...>` provides a confirmation-gated, target-limited route for discarding
   uncommitted changes; ambiguous repository basenames require `group/repo`.
 
+### Changed
+
+- **Roomier TUI panes.** The repository list and detail pane now leave one cell of
+  inner padding around their body content, while the header and footer keep their
+  existing compact heights. Narrow terminals clamp the pane content area safely.
+
 ## v0.7.7 — 2026-06-05
 
 ### Added

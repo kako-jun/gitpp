@@ -37,6 +37,7 @@ gitpp は逆の発想をとる。`~/.gitconfig` のグローバル設定には�
 - **clone / pull / push を並列実行**（並列度は `jobs` で設定、デフォルト20）
 - **status / diff / fetch / branch / switch / stash list / gc** — リポジトリ横断の一括操作
 - **フルスクリーンTUI**（ratatui）— 7状態表示（Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked）とリアルタイムプログレス
+- **読みやすいペインレイアウト** — リポジトリ一覧と詳細ペインの本文に1セルの内側余白を設け、ヘッダーとフッターは従来のコンパクトなレイアウトを保ちます
 - **場所ごとに git config を分離** — `user.name`, `pull.rebase` など任意の git config キーをグループ内の全リポジトリにローカル設定
 - **push はオプトイン制** — `comments.default` を明示的に設定しない限り push は無効。clone/pull はそれなしで動く
 - **Blocked な pull の明示的リカバリ** — `--stash-local` はローカル変更を安全に退避・復元し、`--discard-local <repo...>` は指定リポジトリだけを対象に確認付きで破棄する。同名リポジトリが複数グループにある場合は `group/repo` を指定する

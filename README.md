@@ -39,6 +39,8 @@ not a global config file.
 - **Parallel clone/pull/push** with configurable concurrency (`jobs`, default 20)
 - **7 subcommands beyond clone/pull/push** — status, diff, fetch, branch, switch, stash list, gc
 - **Full-screen TUI** (ratatui) with 7-state icons (Waiting/Running/Updated/Unchanged/Blocked/Failed/Untracked)
+- **Readable pane layout** — the repository list and detail pane keep one cell of
+  inner padding around their content; the header and footer retain their compact layout
 - **Per-directory git config** — `user.name`, `pull.rebase`, and any other git config key,
   applied locally to every repo in the group
 - **Push opt-in** — push is disabled unless `comments.default` is explicitly set; clone/pull

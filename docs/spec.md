@@ -188,6 +188,12 @@ reducing the chance of stray input bytes appearing at the prompt.
 
 ### Layout
 
+The repository list and detail panes draw their body content with one cell of inner
+padding on every side, in addition to the border. The header and footer intentionally
+remain border-only so their fixed heights and compact layout do not change. On a narrow
+terminal, the content area is clamped to zero rather than underflowing; scrolling and
+rendering resume normally when the pane has enough room.
+
 **List mode (default):**
 
 ```
