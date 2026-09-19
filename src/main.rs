@@ -739,6 +739,14 @@ fn spawn_pull_workers(
                         "Updated",
                         100,
                     );
+                } else if result.blocked {
+                    update_repo_status(
+                        &repos_handle,
+                        &repo_name,
+                        RepoStatus::Blocked,
+                        "Blocked",
+                        100,
+                    );
                 } else {
                     update_repo_status(
                         &repos_handle,

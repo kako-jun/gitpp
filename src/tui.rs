@@ -24,6 +24,10 @@ pub enum RepoStatus {
     Running,
     Updated,
     Unchanged,
+    /// pull-only: the ff-only merge was skipped (diverged branch or dirty
+    /// working tree). Distinct from Unchanged so it can be flagged for
+    /// manual follow-up. Never produced by other commands.
+    Blocked,
     Failed,
     Untracked,
 }
@@ -96,14 +100,15 @@ impl TuiApp {
     }
 
     /// 完了 bloom 用 reveal の色。Updated は green、Failed は red、Unchanged/Untracked は
-    /// それぞれの状態色へ。fade_from はその色の暗いシェードにして、bloom が「同色から
-    /// 浮かび上がる」読み心地になるよう揃えている。
+    /// それぞれの状態色へ。Blocked は要確認を示す orange。fade_from はその色の暗いシェード
+    /// にして、bloom が「同色から浮かび上がる」読み心地になるよう揃えている。
     fn completion_reveal_opts(status: &RepoStatus) -> Option<RevealOpts> {
         let (from, to) = match status {
             RepoStatus::Updated => (Rgb(20, 60, 20), Rgb(120, 220, 120)),
             RepoStatus::Failed => (Rgb(60, 20, 20), Rgb(220, 80, 80)),
             RepoStatus::Untracked => (Rgb(60, 20, 60), Rgb(220, 120, 220)),
             RepoStatus::Unchanged => (Rgb(50, 50, 50), Rgb(150, 150, 150)),
+            RepoStatus::Blocked => (Rgb(60, 40, 10), Rgb(230, 160, 40)),
             RepoStatus::Waiting | RepoStatus::Running => return None,
         };
         Some(RevealOpts {
@@ -173,6 +178,10 @@ impl TuiApp {
                             eprintln!("[{}] {}... unchanged", self.command, repo.name);
                             reported.insert(repo.name.clone());
                         }
+                        RepoStatus::Blocked => {
+                            eprintln!("[{}] {}... blocked", self.command, repo.name);
+                            reported.insert(repo.name.clone());
+                        }
                         RepoStatus::Failed => {
                             eprintln!("[{}] {}... FAILED", self.command, repo.name);
                             reported.insert(repo.name.clone());
@@ -190,6 +199,7 @@ impl TuiApp {
                         r.status,
                         RepoStatus::Updated
                             | RepoStatus::Unchanged
+                            | RepoStatus::Blocked
                             | RepoStatus::Failed
                             | RepoStatus::Untracked
                     )
@@ -262,6 +272,7 @@ impl TuiApp {
                     r.status,
                     RepoStatus::Updated
                         | RepoStatus::Unchanged
+                        | RepoStatus::Blocked
                         | RepoStatus::Failed
                         | RepoStatus::Untracked
                 )
@@ -440,6 +451,10 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
+        let blocked_count = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Blocked)
+            .count();
         let failed: Vec<_> = repos
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
@@ -449,17 +464,17 @@ impl TuiApp {
             .filter(|r| r.status == RepoStatus::Untracked)
             .count();
 
-        let done = updated_count + unchanged_count + failed.len() + untracked_count;
+        let done = updated_count + unchanged_count + blocked_count + failed.len() + untracked_count;
 
         if failed.is_empty() {
-            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: 0 / Untracked: {untracked_count})");
+            println!("Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Blocked: {blocked_count} / Failed: 0 / Untracked: {untracked_count})");
             return;
         }
 
         // Plain text, no ANSI codes — clipboard-friendly
         let failed_count = failed.len();
         println!(
-            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Failed: {failed_count} / Untracked: {untracked_count})\n"
+            "Total: {total} | Done: {done} (Updated: {updated_count} / Unchanged: {unchanged_count} / Blocked: {blocked_count} / Failed: {failed_count} / Untracked: {untracked_count})\n"
         );
         for repo in &failed {
             println!("--- {} ({}) ---", repo.name, repo.path);
@@ -634,6 +649,10 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Unchanged)
             .count();
+        let blocked = repos
+            .iter()
+            .filter(|r| r.status == RepoStatus::Blocked)
+            .count();
         let failed = repos
             .iter()
             .filter(|r| r.status == RepoStatus::Failed)
@@ -642,7 +661,7 @@ impl TuiApp {
             .iter()
             .filter(|r| r.status == RepoStatus::Untracked)
             .count();
-        let done = updated + unchanged + failed + untracked;
+        let done = updated + unchanged + blocked + failed + untracked;
         drop(repos);
 
         let stats_line = Line::from(vec![
@@ -657,6 +676,12 @@ impl TuiApp {
             Span::raw(" / "),
             Span::styled("Unchanged: ", Style::default().fg(Color::White)),
             Span::styled(format!("{unchanged}"), Style::default().fg(Color::DarkGray)),
+            Span::raw(" / "),
+            Span::styled("Blocked: ", Style::default().fg(Color::White)),
+            Span::styled(
+                format!("{blocked}"),
+                Style::default().fg(Color::Rgb(230, 160, 40)),
+            ),
             Span::raw(" / "),
             Span::styled("Failed: ", Style::default().fg(Color::White)),
             Span::styled(format!("{failed}"), Style::default().fg(Color::Red)),
@@ -729,6 +754,7 @@ impl TuiApp {
                 RepoStatus::Running => ("▶", Color::Yellow),
                 RepoStatus::Updated => ("✓", Color::Green),
                 RepoStatus::Unchanged => ("─", Color::DarkGray),
+                RepoStatus::Blocked => ("⚠", Color::Rgb(230, 160, 40)),
                 RepoStatus::Failed => ("✗", Color::Red),
                 RepoStatus::Untracked => ("?", Color::Magenta),
             };
@@ -809,6 +835,7 @@ impl TuiApp {
                 Style::default().fg(match repo.status {
                     RepoStatus::Updated => Color::Green,
                     RepoStatus::Unchanged => Color::DarkGray,
+                    RepoStatus::Blocked => Color::Rgb(230, 160, 40),
                     RepoStatus::Failed => Color::Red,
                     RepoStatus::Running => Color::Yellow,
                     RepoStatus::Waiting => Color::DarkGray,
