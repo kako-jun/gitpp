@@ -5,6 +5,10 @@ pub struct GitResult {
     pub output: String,
     pub success: bool,
     pub had_changes: bool,
+    /// True only for `pull` when the ff-only merge was skipped because the
+    /// branch diverged or the working tree had uncommitted local changes.
+    /// Always false for every other command and for every other pull outcome.
+    pub blocked: bool,
 }
 
 pub struct GitController {
@@ -45,6 +49,7 @@ impl GitController {
                 output: all_output,
                 success: false,
                 had_changes: false,
+                blocked: false,
             };
         }
 
@@ -59,6 +64,7 @@ impl GitController {
 
         // 3. Merge branch. None of these mark pull as Failed.
         let mut ff_applied = false;
+        let mut ff_blocked = false;
         if detached || !has_upstream {
             all_output.push_str("[gitpp] fetched only (no upstream)\n");
         } else {
@@ -69,7 +75,9 @@ impl GitController {
                 ff_applied = !merge_result.output.contains("Already up to date");
             } else {
                 // Diverged (non-FF) or dirty working tree blocking the update.
-                // Do not error and do not discard the user's changes — just report.
+                // Do not error and do not discard the user's changes — just report,
+                // and flag it as blocked so it can be distinguished from a true no-op.
+                ff_blocked = true;
                 all_output.push_str("[gitpp] fast-forward skipped (diverged or local changes)\n");
             }
         }
@@ -89,6 +97,7 @@ impl GitController {
             output: all_output,
             success: true,
             had_changes: ff_applied || sub_changed,
+            blocked: ff_blocked,
         }
     }
 
@@ -102,6 +111,7 @@ impl GitController {
                 output: all_output,
                 success: false,
                 had_changes: false,
+                blocked: false,
             };
         }
 
@@ -114,6 +124,7 @@ impl GitController {
                     output: all_output,
                     success: true,
                     had_changes: false,
+                    blocked: false,
                 };
             }
             // Pre-commit hook may have modified files (e.g. formatter).
@@ -130,6 +141,7 @@ impl GitController {
                     output: all_output,
                     success: false,
                     had_changes: false,
+                    blocked: false,
                 };
             }
         }
@@ -141,6 +153,7 @@ impl GitController {
             output: all_output,
             success: push_result.success,
             had_changes: true,
+            blocked: false,
         }
     }
 
@@ -202,6 +215,7 @@ impl GitController {
                 output: "error: neither main nor master branch found".to_string(),
                 success: false,
                 had_changes: false,
+                blocked: false,
             };
         };
 
@@ -210,6 +224,7 @@ impl GitController {
                 output: format!("Already on '{target}'\n"),
                 success: true,
                 had_changes: false,
+                blocked: false,
             };
         }
 
@@ -261,6 +276,7 @@ impl GitController {
                     output: format!("error: {e}"),
                     success: false,
                     had_changes: false,
+                    blocked: false,
                 }
             }
         };
@@ -275,6 +291,7 @@ impl GitController {
             success: output.status.success(),
             output: text,
             had_changes: false,
+            blocked: false,
         }
     }
 }
@@ -389,6 +406,7 @@ mod tests {
 
         assert!(!result.success, "fetch failure must mark pull as Failed");
         assert!(!result.had_changes);
+        assert!(!result.blocked, "a fetch failure is not a blocked pull");
         let lower = result.output.to_lowercase();
         assert!(
             lower.contains("could not read from remote")
@@ -412,6 +430,7 @@ mod tests {
 
         assert!(result.success);
         assert!(result.had_changes, "an applied fast-forward is Updated");
+        assert!(!result.blocked, "an applied fast-forward is not blocked");
         assert!(
             !result.output.contains("Already up to date"),
             "applied FF must not report up-to-date: {}",
@@ -436,6 +455,7 @@ mod tests {
 
         assert!(result.success);
         assert!(!result.had_changes, "no movement means Unchanged");
+        assert!(!result.blocked, "up-to-date is Unchanged, not Blocked");
         assert!(
             result.output.contains("Already up to date"),
             "output should report up-to-date: {}",
@@ -443,10 +463,10 @@ mod tests {
         );
     }
 
-    // --- D4: diverged is Unchanged and non-destructive ----------------------
+    // --- D4: diverged is Blocked and non-destructive -------------------------
 
     #[test]
-    fn pull_diverged_is_unchanged_and_nondestructive() {
+    fn pull_diverged_is_blocked_and_nondestructive() {
         let tmp = TempDir::new().unwrap();
         let origin = seed_origin(tmp.path());
         let work = clone_work(tmp.path(), &origin);
@@ -462,6 +482,10 @@ mod tests {
 
         assert!(result.success, "divergence is reported, not a hard failure");
         assert!(!result.had_changes);
+        assert!(
+            result.blocked,
+            "a diverged branch must be reported as Blocked, distinct from Unchanged"
+        );
         assert!(
             result
                 .output
@@ -481,10 +505,10 @@ mod tests {
         );
     }
 
-    // --- D5: dirty working tree is Unchanged and preserves the edit ----------
+    // --- D5: dirty working tree is Blocked and preserves the edit -----------
 
     #[test]
-    fn pull_dirty_tree_is_unchanged_and_preserves_edit() {
+    fn pull_dirty_tree_is_blocked_and_preserves_edit() {
         let tmp = TempDir::new().unwrap();
         let origin = seed_origin(tmp.path());
         let work = clone_work(tmp.path(), &origin);
@@ -499,6 +523,10 @@ mod tests {
 
         assert!(result.success);
         assert!(!result.had_changes);
+        assert!(
+            result.blocked,
+            "a dirty working tree blocking ff-only must be reported as Blocked, distinct from Unchanged"
+        );
         assert!(
             result.output.contains("fast-forward skipped"),
             "blocked FF should report a skip: {}",
@@ -526,6 +554,7 @@ mod tests {
 
         assert!(result.success);
         assert!(!result.had_changes);
+        assert!(!result.blocked, "fetch-only (no upstream) is not Blocked");
         assert!(
             result.output.contains("fetched only (no upstream)"),
             "no-upstream branch should be fetched-only: {}",
@@ -553,6 +582,7 @@ mod tests {
 
         assert!(result.success);
         assert!(!result.had_changes);
+        assert!(!result.blocked, "fetch-only (detached HEAD) is not Blocked");
         assert!(
             result.output.contains("fetched only (no upstream)"),
             "detached HEAD should be fetched-only: {}",
@@ -575,6 +605,7 @@ mod tests {
 
         let result = GitController::new().git_pull(&work);
 
+        assert!(result.blocked, "diverged pull must be reported as Blocked");
         assert!(
             result.output.contains("fast-forward skipped"),
             "diverged output must contain the skip marker: {}",
@@ -606,6 +637,7 @@ mod tests {
             result.output
         );
         assert!(result.had_changes, "a successful clone reports had_changes");
+        assert!(!result.blocked, "clone never reports blocked");
         assert!(
             parent.join("origin").join("file.txt").exists(),
             "cloned working tree should contain the seeded file"
@@ -664,6 +696,10 @@ mod tests {
             result.success,
             "submodule update failure must not fail the pull: {}",
             result.output
+        );
+        assert!(
+            !result.blocked,
+            "a submodule sync failure is not a blocked ff-only merge"
         );
         assert!(
             result.output.contains("warning: submodule update failed"),
